@@ -685,12 +685,26 @@ def setup_model_and_optimizer(neox_args, use_cache=False, iteration=None):
         raise ValueError("Must be using deepspeed to run neox")
 
     if neox_args.load is not None:
+
+        def custom_load_function(src, dst):
+            updated_state_dict = {}
+            for key, value in src.items():
+                new_key = key
+                if "attention." in key:
+                    new_key = key.replace("attention.", "attention.attn_block.")
+                if "mlp." in key:
+                    new_key = key.replace("mlp.", "mlp.attn_block.")
+                updated_state_dict[new_key] = value
+            import pdb; pdb.set_trace()
+            dst.load_state_dict(updated_state_dict, strict=True)
+
         neox_args.iteration = load_checkpoint(
             neox_args=neox_args,
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             iteration=iteration,
+            custom_load_fn=custom_load_function,
         )
         print_rank_0(
             f"Loading checkpoint and starting from iteration {neox_args.iteration}"
