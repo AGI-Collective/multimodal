@@ -361,6 +361,7 @@ def get_batch_pipe_image_text(input,neox_args):
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
         data=captions,
         eod_token=neox_args.tokenizer.eod,
+        pad_token=neox_args.tokenizer.pad_id,
         eod_mask_loss=neox_args.eod_mask_loss,
 )
     return (images, captions, position_ids, attention_mask), (labels, loss_mask)
