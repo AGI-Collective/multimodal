@@ -29,16 +29,6 @@ class SharedEpoch:
     def get_value(self):
         return self.shared_epoch.value
 
-
-@dataclass
-class DataInfo:
-    dataloader: DataLoader
-    shared_epoch: SharedEpoch = None
-
-    def set_epoch(self, epoch):
-        if self.shared_epoch is not None:
-            self.shared_epoch.set_value(epoch)
-
 def expand_urls(urls, weights=None):
     if weights is None:
         expanded_urls = wds.shardlists.expand_urls(urls)
@@ -156,43 +146,8 @@ def pytorch_worker_seed(increment=0):
     return wds.utils.pytorch_worker_seed()
 
 
-_SHARD_SHUFFLE_SIZE = 2000
-_SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
-
-
-class detshuffle2(wds.PipelineStage):
-    def __init__(
-            self,
-            bufsize=1000,
-            initial=100,
-            seed=0,
-            epoch=-1,
-    ):
-        self.bufsize = bufsize
-        self.initial = initial
-        self.seed = seed
-        self.epoch = epoch
-
-    def run(self, src):
-        if isinstance(self.epoch, SharedEpoch):
-            epoch = self.epoch.get_value()
-        else:
-            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
-            # situation as different workers may wrap at different times (or not at all).
-            self.epoch += 1
-            epoch = self.epoch
-        rng = random.Random()
-        if self.seed < 0:
-            # If seed is negative, we use the worker's seed, this will be different across all nodes/workers
-            seed = pytorch_worker_seed(epoch)
-        else:
-            # This seed to be deterministic AND the same across all nodes/workers in each epoch
-            seed = self.seed + epoch
-        rng.seed(seed)
-        return _shuffle(src, self.bufsize, self.initial, rng)
-
 
 class ResampledShards2(IterableDataset):
     """An iterable dataset yielding a list of urls."""
@@ -221,18 +176,13 @@ class ResampledShards2(IterableDataset):
         self.nshards = nshards
         self.rng = random.Random()
         self.worker_seed = worker_seed
+        
         self.deterministic = deterministic
         self.epoch = epoch
 
     def __iter__(self):
         """Return an iterator over the shards."""
-        if isinstance(self.epoch, SharedEpoch):
-            epoch = self.epoch.get_value()
-        else:
-            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
-            # situation as different workers may wrap at different times (or not at all).
-            self.epoch += 1
-            epoch = self.epoch
+        epoch = self.epoch.get_value()
         if self.deterministic:
             # reset seed w/ epoch if deterministic
             if self.worker_seed is None:
@@ -247,6 +197,45 @@ class ResampledShards2(IterableDataset):
             else:
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
+class SimpleShardList2(IterableDataset):
+    """An iterable dataset yielding a list of urls."""
+
+    def __init__(self, 
+                 urls,
+                 epoch=-1,
+                 seed=0,
+                 num_sub_epochs=None
+                 ):
+        """Iterate through the list of shards.
+
+        :param urls: a list of URLs as a Python list or brace notation string
+        """
+        super().__init__()
+        urls,_ = expand_urls(urls)
+        self.urls = urls
+        assert isinstance(self.urls[0], str)
+        self.seed = seed
+        self.epoch = epoch
+        self.num_sub_epochs = num_sub_epochs
+
+    def __len__(self):
+        return len(self.urls)
+
+    def __iter__(self):
+        """Return an iterator over the shards."""
+        urls = self.urls.copy()
+        epoch = self.epoch.get_value()
+        if self.num_sub_epochs is None:
+            seed = self.seed + epoch
+        else:
+            seed = self.seed + (epoch // self.num_sub_epochs)
+        random.Random(self.seed).shuffle(urls)
+        
+        if self.num_sub_epochs is not None:
+            urls = urls[epoch % self.num_sub_epochs::self.num_sub_epochs]
+            
+        for url in urls:
+            yield dict(url=url)
 
 def image_text_dict_collation_fn(samples):
     """Customize collation_fn to generate dict batch """
@@ -284,30 +273,24 @@ def get_wds_data(args, is_train, epoch=0, floor=False):
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
 
-    shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
         pipeline = [ResampledShards2(
             input_shards,
             weights=args.train_data_upsampling_factors,
             deterministic=True,
-            epoch=shared_epoch,
+            epoch=args.shared_epoch,
         )]
     else:
         assert args.train_data_upsampling_factors is None,\
            "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
-        pipeline = [wds.SimpleShardList(input_shards)]
+        # pipeline = [wds.SimpleShardList(input_shards)]
+        pipeline = [SimpleShardList2(input_shards, epoch=args.shared_epoch, num_sub_epochs=args.num_subepochs_per_epoch)]
 
     # at this point we have an iterator over all the shards
     if is_train:
         if not resampled:
             pipeline.extend([
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
                 wds.split_by_node,
                 wds.split_by_worker,
             ])
@@ -372,37 +355,4 @@ def get_wds_data(args, is_train, epoch=0, floor=False):
         persistent_workers=not (args.num_workers == 0),  # set persistent_workers to false if num_workers is 0
     )
 
-    # FIXME not clear which approach is better, with_epoch before vs after dataloader?
-    # hoping to resolve via https://github.com/webdataset/webdataset/issues/169
-    # if is_train:
-    #     # roll over and repeat a few samples to get same number of full batches on each node
-    #     global_batch_size = args.batch_size * args.world_size
-    #     num_batches = math.ceil(num_samples / global_batch_size)
-    #     num_workers = max(1, args.num_workers)
-    #     num_batches = math.ceil(num_batches / num_workers) * num_workers
-    #     num_samples = num_batches * global_batch_size
-    #     dataloader = dataloader.with_epoch(num_batches)
-    # else:
-    #     # last batches are partial, eval is done on single (master) node
-    #     num_batches = math.ceil(num_samples / args.batch_size)
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
-
-
-# def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
-#     preprocess_train, preprocess_val = preprocess_fns
-#     data = {}
-
-#     if args.train_data or args.dataset_type == "synthetic":
-#         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
-#             args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
-
-#     if args.val_data:
-#         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
-#             args, preprocess_val, is_train=False, tokenizer=tokenizer)
-
-#     return data
+    return dataloader
