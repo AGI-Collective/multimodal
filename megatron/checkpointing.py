@@ -223,7 +223,7 @@ def save_checkpoint(neox_args, iteration, model, optimizer, lr_scheduler):
 
 
 def load_checkpoint(
-    neox_args, model, optimizer, lr_scheduler, inference=False, iteration=None
+    neox_args, model, optimizer, lr_scheduler, inference=False, iteration=None, custom_load_fn=None
 ):
     """Load a model checkpoint and return the iteration."""
     if neox_args.deepspeed:
@@ -240,7 +240,9 @@ def load_checkpoint(
             neox_args.load,
             load_optimizer_states=load_optim_and_scheduler,
             load_lr_scheduler_states=load_optim_and_scheduler,
+            load_module_only=not load_optim_and_scheduler,
             tag=tag,
+            custom_load_fn=custom_load_fn,
         )
 
         if checkpoint_name is None:
