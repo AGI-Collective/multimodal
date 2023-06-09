@@ -494,7 +494,7 @@ def compile_helper():
 
         sys.exit(1)
 
-def build_web_train_valid_test_data_iterators(neox_args):
+def build_web_train_valid_test_data_loaders(neox_args):
     """XXX"""
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
@@ -514,10 +514,8 @@ def build_web_train_valid_test_data_iterators(neox_args):
         assert (
             neox_args.train_data_paths
                 ),f'in webdataset format, require --train_data_path'
-        train_data = get_wds_data(neox_args,is_train=True) 
-        valid_data = get_wds_data(neox_args,is_train=False) 
-        train_dataloader = train_data.dataloader
-        valid_dataloader = valid_data.dataloader
+        train_dataloader = get_wds_data(neox_args,is_train=True) 
+        valid_dataloader = get_wds_data(neox_args,is_train=False) 
         #[TODO] No test data set up yet 
         
         # Flags to know if we need to do training/validation/testing.
@@ -542,22 +540,4 @@ def build_web_train_valid_test_data_iterators(neox_args):
     neox_args.do_train = flags[0].item()
     neox_args.do_valid = flags[1].item()
     neox_args.do_test = flags[2].item()
-    
-    # [TODO] may need to setup the start_iter and manage shard epoch here
-        # Build iterators.
-    if train_dataloader is not None:
-        train_data_iterator = iter(train_dataloader)
-    else:
-        train_data_iterator = None
-
-    if valid_dataloader is not None:
-        valid_data_iterator = iter(valid_dataloader)
-    else:
-        valid_data_iterator = None
-
-    if test_dataloader is not None:
-        test_data_iterator = iter(test_dataloader)
-    else:
-        test_data_iterator = None
- 
-    return train_data_iterator, valid_data_iterator, test_data_iterator
+    return train_dataloader, valid_dataloader, test_dataloader 

@@ -45,7 +45,7 @@ from megatron.model import (
     add_adapters
 )
 from megatron.checkpointing import load_checkpoint, save_checkpoint
-from megatron.data.data_utils import build_web_train_valid_test_data_iterators, build_train_valid_test_data_iterators
+from megatron.data.data_utils import build_web_train_valid_test_data_loaders, build_train_valid_test_data_iterators
 from megatron.initialize import initialize_megatron
 from megatron.learning_rates import AnnealingLR
 from megatron.logging import tb_wandb_log, training_log
@@ -198,10 +198,22 @@ def pretrain(neox_args):
     # Data stuff.
     timers("train/valid/test data iterators").start()
     (
-        train_data_iterator,
-        valid_data_iterator,
-        test_data_iterator,
-    ) = build_web_train_valid_test_data_iterators(neox_args=neox_args)
+        train_dataloader,
+        valid_dataloader,
+        test_dataloader,
+    ) = build_web_train_valid_test_data_loaders(neox_args=neox_args)
+    if train_dataloader is not None:
+        train_data_iterator = iter(train_dataloader)
+    else:
+        train_data_iterator = None
+    if valid_dataloader is not None:
+        valid_data_iterator = iter(valid_dataloader)
+    else:
+        valid_data_iterator = None
+    if test_dataloader is not None:
+        test_data_iterator = iter(test_dataloader)
+    else:
+        test_data_iterator = None
     timers("train/valid/test data iterators").stop()
 
     if neox_args.use_mup and neox_args.coord_check:
@@ -797,8 +809,8 @@ def train(
     model,
     optimizer,
     lr_scheduler,
-    train_data_iterator,
-    valid_data_iterator,
+    train_dataloader,
+    valid_dataloader,
 ):
     """Train the model function."""
 
@@ -810,6 +822,16 @@ def train(
 
     # Iterations.
     iteration = neox_args.iteration
+    
+    print_rank_0('Diving into Training now!')
+    # data_iterator
+    train_data_iterator = None
+    valid_data_iterator = None
+    if train_dataloader is not None: 
+        train_data_iterator = iter(train_dataloader)
+    if valid_dataloader is not None:
+        valid_data_iterator = iter(valid_dataloader) 
+    print(f'get init_iter {train_data_iterator}!!!') 
 
     timers("interval time").start()
     report_memory_flag = True
@@ -820,6 +842,15 @@ def train(
     # to monitor if we've skipped many iterations in a row and trigger an early exit
     overflow_monitor = OverflowMonitor(optimizer)
     while iteration < neox_args.train_iters:
+        
+        if neox_args.num_subepochs_per_epoch and train_data_iterator is not None and iteration in neox_args.save_iters:
+            sub_epoch_num = int(iteration / neox_args.checkpoint_factor)
+            print_rank_0(f'reset shared epoch value to {sub_epoch_num}')
+            neox_args.shared_epoch.set_value(sub_epoch_num)
+            if train_dataloader is not None:
+                train_data_iterator = iter(train_dataloader)            
+            print_rank_0(f'Getted train_iterator now!')
+        
         loss_dict, skipped_iter = train_step(
             neox_args=neox_args,
             timers=timers,
