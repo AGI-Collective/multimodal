@@ -242,8 +242,8 @@ def pretrain(neox_args):
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            train_data_iterator=train_data_iterator,
-            valid_data_iterator=valid_data_iterator,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,      
         )
 
     if neox_args.do_valid:
@@ -373,6 +373,7 @@ def get_batch_pipe_image_text(input,neox_args):
         
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
         data=captions,
+        pad_token=neox_args.tokenizer.pad_id,
         eod_token=neox_args.tokenizer.eod,
         eod_mask_loss=neox_args.eod_mask_loss,
 )
@@ -823,7 +824,6 @@ def train(
     # Iterations.
     iteration = neox_args.iteration
     
-    print_rank_0('Diving into Training now!')
     # data_iterator
     train_data_iterator = None
     valid_data_iterator = None
@@ -831,7 +831,6 @@ def train(
         train_data_iterator = iter(train_dataloader)
     if valid_dataloader is not None:
         valid_data_iterator = iter(valid_dataloader) 
-    print(f'get init_iter {train_data_iterator}!!!') 
 
     timers("interval time").start()
     report_memory_flag = True
@@ -842,14 +841,13 @@ def train(
     # to monitor if we've skipped many iterations in a row and trigger an early exit
     overflow_monitor = OverflowMonitor(optimizer)
     while iteration < neox_args.train_iters:
-        
+        # rebuild data-iter when updating sub shared-epoch
         if neox_args.num_subepochs_per_epoch and train_data_iterator is not None and iteration in neox_args.save_iters:
             sub_epoch_num = int(iteration / neox_args.checkpoint_factor)
             print_rank_0(f'reset shared epoch value to {sub_epoch_num}')
             neox_args.shared_epoch.set_value(sub_epoch_num)
             if train_dataloader is not None:
                 train_data_iterator = iter(train_dataloader)            
-            print_rank_0(f'Getted train_iterator now!')
         
         loss_dict, skipped_iter = train_step(
             neox_args=neox_args,

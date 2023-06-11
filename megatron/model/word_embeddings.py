@@ -171,7 +171,7 @@ class EmbeddingPipe(Embedding):
         
         self.image_prefix = ImagePrefix(
             config = neox_args,
-            out_dim=neox_args.hidden_size,
+            out_dim = neox_args.hidden_size,
         )
 
     @property

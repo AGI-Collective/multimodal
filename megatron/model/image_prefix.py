@@ -84,7 +84,7 @@ def clip_encoder(
         encoder = open_clip.create_model(
             name, 
             device=device, 
-            precision="fp16" if "cuda" in str(device) else "fp32", 
+            precision= "fp32", 
             pretrained=pretrained,
             cache_dir=cache_path
         ).visual
@@ -92,8 +92,7 @@ def clip_encoder(
         encoder = open_clip.create_model(
             name, 
             device=device, 
-            precision="fp16" if "cuda" in str(device) else "fp32", 
-            # pretrained=pretrained,
+            precision= "fp32", 
             cache_dir=cache_path
         ).visual
          
@@ -155,7 +154,8 @@ def get_image_encoder(
 ENCODER_SEQ_LENS = {
     "clip_resnet": 49,
     "clip_resnet_large": 144,
-    "openclip-H": 257
+    "openclip-H": 257,
+    "openclip-B32": 257,
 }
 
 ENCODER_OUT_DIMS = {
@@ -164,6 +164,7 @@ ENCODER_OUT_DIMS = {
     "clip_resnet": 2560,
     "clip_resnet_large": 3072,
     "openclip-H": 1024,
+    "openclip-B32": 512,
 }
 
 
@@ -194,7 +195,7 @@ class ImagePrefix(nn.Module):
         # get image encoder backbone
         self.enc = get_image_encoder(
             config.encoder_name,
-            # device=self.device,
+            device=self.device,
             pretrained=config.pretrained_img_encoder,
             cache_path = config.load_clip
         )
@@ -220,7 +221,6 @@ class ImagePrefix(nn.Module):
 
         # pass through image encoder
         logits = self.enc(x)
-
         # remove trailing dimensions of size 1 + pass through linear
         if logits.ndim == 4:
             logits = rearrange(logits, "b d 1 1 -> b d")
