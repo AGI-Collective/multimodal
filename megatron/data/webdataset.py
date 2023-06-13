@@ -18,6 +18,7 @@ from torch.utils.data import  DataLoader,  IterableDataset, get_worker_info
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 
+from megatron import mpu
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
@@ -28,6 +29,7 @@ class SharedEpoch:
 
     def get_value(self):
         return self.shared_epoch.value
+
 
 def expand_urls(urls, weights=None):
     if weights is None:
@@ -53,28 +55,6 @@ def expand_urls(urls, weights=None):
     else:
         all_urls = list(urls)
         return all_urls, weights
-
-
-def get_dataset_size(shards):
-    shards_list = (shards)
-    dir_path = os.path.dirname(shards_list[0])
-    sizes_filename = os.path.join(dir_path, 'sizes.json')
-    len_filename = os.path.join(dir_path, '__len__')
-    if os.path.exists(sizes_filename):
-        sizes = json.load(open(sizes_filename, 'r'))
-        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
-    elif os.path.exists(len_filename):
-        # FIXME this used to be eval(open(...)) but that seemed rather unsafe
-        total_size = ast.literal_eval(open(len_filename, 'r').read())
-    else:
-        total_size = None  # num samples undefined
-        # some common dataset sizes (at time of authors last download)
-        # CC3M (train): 2905954
-        # CC12M: 10968539
-        # LAION-400M: 407332084
-        # LAION-2B (english): 2170337258
-    num_shards = len(shards_list)
-    return total_size, num_shards
 
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
@@ -183,6 +163,7 @@ class ResampledShards2(IterableDataset):
     def __iter__(self):
         """Return an iterator over the shards."""
         epoch = self.epoch.get_value()
+        print(f'start at {epoch} sub epoch')
         if self.deterministic:
             # reset seed w/ epoch if deterministic
             if self.worker_seed is None:
@@ -217,6 +198,7 @@ class SimpleShardList2(IterableDataset):
         self.seed = seed
         self.epoch = epoch
         self.num_sub_epochs = num_sub_epochs
+        print(f'total urls shards number is {len(urls)}')
 
     def __len__(self):
         return len(self.urls)
@@ -231,10 +213,19 @@ class SimpleShardList2(IterableDataset):
             seed = self.seed + (epoch // self.num_sub_epochs)
         random.Random(self.seed).shuffle(urls)
         
+        assert(
+            len(urls) >= self.num_sub_epochs
+        ),f'shards number is {len(urls)}, smaller than num_sub_epochs {self.num_sub_epochs}'\
+            'please increase train shareds num or reduce num_sub_epochs'\
+            'num_sub_epoch = train_num_samples / global_batch_size / checkpoint_factor'
+        
         if self.num_sub_epochs is not None:
             urls = urls[epoch % self.num_sub_epochs::self.num_sub_epochs]
-            
+
+        print(f'start at {epoch} sub epoch with number {self.num_sub_epochs} with {len(urls)} shards and total shards{len(self.urls.copy())}')
+         
         for url in urls:
+            print(f'get url {url} now from {os.environ["RANK"]}')
             yield dict(url=url)
 
 def image_text_dict_collation_fn(samples):
@@ -253,27 +244,52 @@ def image_text_dict_collation_fn(samples):
     
     return result
 
-def get_wds_data(args, is_train, epoch=0, floor=False):
+def get_data_parallel_info():    
+    if False:
+        rank = mpu.get_data_parallel_rank()
+        world_size = mpu.get_data_parallel_world_size()
+    else:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+    return rank, world_size
+
+def get_dp_world_size_wrap(original_function):
+    
+    def wrapper(*args, **kwargs):
+        dp_rank, dp_world_size = get_data_parallel_info()
+        world_size = int(os.environ['WORLD_SIZE'])
+        rank = int(os.environ['RANK'])
+        os.environ['RANK'] = str(dp_rank) 
+        os.environ['WORLD_SIZE'] = str(dp_world_size) 
+        # change the worldsize to data-parallel world-size for group by node function. 
+        result = original_function(*args, **kwargs)
+        # change back to aviod potenital issues caused by wrong WORLD_SIZE
+        os.environ['RANK'] = str(rank)
+        os.environ['WORLD_SIZE'] = str(world_size)
+        return result
+    
+    return wrapper
+
+
+def get_wds_data(args, is_train, floor=False):
     input_shards = args.train_data_paths if is_train else args.valid_data_paths
-    assert input_shards is not None
-
+    rank, world_size = get_data_parallel_info() # get world_size as data-parallel-world-size
     resampled = getattr(args, 'dataset_resampled', False) and is_train
-
-    num_shards = None
+    round_fn = math.floor if floor else math.ceil
+    assert input_shards is not None
+    
+    # get the num_samples info
     if is_train:
         if args.train_num_samples is not None:
             num_samples = args.train_num_samples
         else:
-            num_samples, num_shards = get_dataset_size(input_shards)
-            if not num_samples:
-                raise RuntimeError(
-                    'Currently, the number of dataset samples must be specified for the training dataset. '
-                    'Please specify it via `--train-num-samples` if no dataset length info is present.')
+            raise RuntimeError(
+                'Currently, the number of dataset samples must be specified for the training dataset. '
+                'Please specify it via `--train-num-samples` if no dataset length info is present.')
     else:
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
 
-    
     if resampled:
         pipeline = [ResampledShards2(
             input_shards,
@@ -282,10 +298,20 @@ def get_wds_data(args, is_train, epoch=0, floor=False):
             epoch=args.shared_epoch,
         )]
     else:
-        assert args.train_data_upsampling_factors is None,\
-           "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
-        # pipeline = [wds.SimpleShardList(input_shards)]
-        pipeline = [SimpleShardList2(input_shards, epoch=args.shared_epoch, num_sub_epochs=args.num_subepochs_per_epoch)]
+        if is_train:
+            global_batch_size=world_size*args.batch_size
+            num_batches = round_fn(args.train_num_samples / global_batch_size)
+            num_workers = max(1, args.num_workers)
+            num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+            num_batches = num_worker_batches * num_workers
+            train_one_epoch_iters = num_batches 
+            num_sub_epochs = round_fn(train_one_epoch_iters / args.checkpoint_factor)
+            assert (
+                args.checkpoint_scale == 'linear'
+                    ), f'webdataset only works with linear checkpoint saving way'
+        else:
+            num_sub_epochs = 1 # val don't need to recover from iter
+        pipeline = [SimpleShardList2(input_shards, epoch=args.shared_epoch, num_sub_epochs=num_sub_epochs)]
 
     # at this point we have an iterator over all the shards
     if is_train:
@@ -328,24 +354,14 @@ def get_wds_data(args, is_train, epoch=0, floor=False):
         wds.batched(args.batch_size, collation_fn=image_text_dict_collation_fn, partial=not is_train)
     ])
 
-    dataset = wds.DataPipeline(*pipeline)
+    # wrap with data-parallel-world-size
+    dataset = get_dp_world_size_wrap(wds.DataPipeline)(*pipeline)
 
     if is_train:
         if not resampled:
-            num_shards = num_shards or len(expand_urls(input_shards)[0])
-            assert num_shards >= args.num_workers * args.world_size, 'number of shards must be >= total workers'
-        # roll over and repeat a few samples to get same number of full batches on each node
-        round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
-        num_batches = round_fn(num_samples / global_batch_size)
-        num_workers = max(1, args.num_workers)
-        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-        num_batches = num_worker_batches * num_workers
-        num_samples = num_batches * global_batch_size
+            num_shards = len(expand_urls(input_shards)[0])
+            assert num_shards/num_sub_epochs >= args.num_workers * world_size, 'number of shards of subset must be >= total workers'
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
-    else:
-        # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
 
     dataloader = wds.WebLoader(
         dataset,
@@ -354,5 +370,5 @@ def get_wds_data(args, is_train, epoch=0, floor=False):
         num_workers=args.num_workers,
         persistent_workers=not (args.num_workers == 0),  # set persistent_workers to false if num_workers is 0
     )
-
+    
     return dataloader

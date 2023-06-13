@@ -173,21 +173,6 @@ class NeoXArgs(*BASE_CLASSES):
         else:
             sub_epoch_num = 0
         self.shared_epoch = SharedEpoch(epoch=sub_epoch_num)
-        # compute meta data for dataloader
-        self.global_batch_size = self.batch_size * self.world_size 
-        num_batches = round_fn(self.train_num_samples / self.global_batch_size)
-        num_workers = max(1, self.num_workers)
-        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-        self.num_batches = num_worker_batches * num_workers
-        self.train_one_epoch_iters = round_fn(self.num_batches / self.gradient_accumulation_steps)
-        self.num_subepochs_per_epoch = round_fn(self.train_one_epoch_iters / self.checkpoint_factor)
-        
-        assert (
-            self.checkpoint_scale == 'linear'
-                ), f'webdataset only works with linear checkpoint saving way'
-        assert (
-            self.num_subepochs_per_epoch != 0
-            ), f'num_subepochs_per_epoch == 0, please decrease checkpoint_factor or increase train_num_samples'
 
     @classmethod
     def from_ymls(cls, paths_to_yml_files: List[str], overwrite_values: Dict = None):
