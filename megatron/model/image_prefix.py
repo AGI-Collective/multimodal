@@ -183,12 +183,10 @@ class ImagePrefix(nn.Module):
         self,
         config,
         out_dim: int = 2048,
-        device=None,
+        device='cpu',
     ):
         super().__init__()
-        self.device = device or torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        self.device = device
         self.config = config
         self.encoder_type = config.encoder_name
 
