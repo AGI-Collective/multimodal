@@ -8,8 +8,6 @@
   #"vocab-file": "/home/lfsm/code/gpt-neox/data/gpt2-vocab.json",
   #"merge-file": "/home/lfsm/code/gpt-neox/data/gpt2-merges.txt",
 
-  "tokenizer_type": "HFGPT2Tokenizer",
-  
   "save": "/gpfs/alpine/scratch/lfsm/csc499/checkpoints",
   "load": "/gpfs/alpine/scratch/lfsm/csc499/checkpoints",
   # separate load path for pretrained clip, same with 'load' in this case

@@ -173,6 +173,7 @@ class ResampledShards2(IterableDataset):
                 seed = self.worker_seed() + epoch
             self.rng.seed(seed)
         for _ in range(self.nshards):
+            print(f'get url {self.rng.choice(self.urls)} now from {os.environ["RANK"]}')
             if self.weights is None:
                 yield dict(url=self.rng.choice(self.urls))
             else:
@@ -223,7 +224,6 @@ class SimpleShardList2(IterableDataset):
             urls = urls[epoch % self.num_sub_epochs::self.num_sub_epochs]
 
         print(f'start at {epoch} sub epoch with number {self.num_sub_epochs} with {len(urls)} shards and total shards{len(self.urls.copy())}')
-         
         for url in urls:
             print(f'get url {url} now from {os.environ["RANK"]}')
             yield dict(url=url)
@@ -245,32 +245,21 @@ def image_text_dict_collation_fn(samples):
     return result
 
 def get_data_parallel_info():    
-    if False:
-        rank = mpu.get_data_parallel_rank()
-        world_size = mpu.get_data_parallel_world_size()
-    else:
-        rank = int(os.environ['RANK'])
-        world_size = int(os.environ['WORLD_SIZE'])
+    rank = mpu.get_data_parallel_rank()
+    world_size = mpu.get_data_parallel_world_size()
     return rank, world_size
 
-def get_dp_world_size_wrap(original_function):
-    
-    def wrapper(*args, **kwargs):
-        dp_rank, dp_world_size = get_data_parallel_info()
-        world_size = int(os.environ['WORLD_SIZE'])
-        rank = int(os.environ['RANK'])
-        os.environ['RANK'] = str(dp_rank) 
-        os.environ['WORLD_SIZE'] = str(dp_world_size) 
-        # change the worldsize to data-parallel world-size for group by node function. 
-        result = original_function(*args, **kwargs)
-        # change back to aviod potenital issues caused by wrong WORLD_SIZE
-        os.environ['RANK'] = str(rank)
-        os.environ['WORLD_SIZE'] = str(world_size)
-        return result
-    
-    return wrapper
-
-
+from itertools import islice
+def my_split_by_node(src):
+    rank, world_size = get_data_parallel_info()
+    if world_size > 1:
+        import pdb;pdb.set_trace()
+        for s in islice(src, rank, None, world_size):
+            yield s
+    else:
+        for s in src:
+            yield s
+            
 def get_wds_data(args, is_train, floor=False):
     input_shards = args.train_data_paths if is_train else args.valid_data_paths
     rank, world_size = get_data_parallel_info() # get world_size as data-parallel-world-size
@@ -278,18 +267,6 @@ def get_wds_data(args, is_train, floor=False):
     round_fn = math.floor if floor else math.ceil
     assert input_shards is not None
     
-    # get the num_samples info
-    if is_train:
-        if args.train_num_samples is not None:
-            num_samples = args.train_num_samples
-        else:
-            raise RuntimeError(
-                'Currently, the number of dataset samples must be specified for the training dataset. '
-                'Please specify it via `--train-num-samples` if no dataset length info is present.')
-    else:
-        # Eval will just exhaust the iterator if the size is not specified.
-        num_samples = args.val_num_samples or 0 
-
     if resampled:
         pipeline = [ResampledShards2(
             input_shards,
@@ -297,6 +274,11 @@ def get_wds_data(args, is_train, floor=False):
             deterministic=True,
             epoch=args.shared_epoch,
         )]
+        global_batch_size=world_size*args.batch_size
+        num_batches = round_fn(args.train_num_samples / global_batch_size)
+        num_workers = max(1, args.num_workers)
+        num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+
     else:
         if is_train:
             global_batch_size=world_size*args.batch_size
@@ -317,7 +299,8 @@ def get_wds_data(args, is_train, floor=False):
     if is_train:
         if not resampled:
             pipeline.extend([
-                wds.split_by_node,
+                # wds.split_by_node,
+                my_split_by_node,
                 wds.split_by_worker,
             ])
         pipeline.extend([
@@ -355,12 +338,12 @@ def get_wds_data(args, is_train, floor=False):
     ])
 
     # wrap with data-parallel-world-size
-    dataset = get_dp_world_size_wrap(wds.DataPipeline)(*pipeline)
+    dataset = wds.DataPipeline(*pipeline)
 
     if is_train:
         if not resampled:
             num_shards = len(expand_urls(input_shards)[0])
-            assert num_shards/num_sub_epochs >= args.num_workers * world_size, 'number of shards of subset must be >= total workers'
+            assert num_shards/num_sub_epochs >= num_workers * world_size, 'number of shards of subset must be >= total workers'
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
 
     dataloader = wds.WebLoader(
