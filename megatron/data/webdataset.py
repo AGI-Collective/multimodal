@@ -225,7 +225,6 @@ class SimpleShardList2(IterableDataset):
 
         print(f'start at {epoch} sub epoch with number {self.num_sub_epochs} with {len(urls)} shards and total shards{len(self.urls.copy())}')
         for url in urls:
-            print(f'get url {url} now from {os.environ["RANK"]}')
             yield dict(url=url)
 
 def image_text_dict_collation_fn(samples):
@@ -253,8 +252,8 @@ from itertools import islice
 def my_split_by_node(src):
     rank, world_size = get_data_parallel_info()
     if world_size > 1:
-        import pdb;pdb.set_trace()
         for s in islice(src, rank, None, world_size):
+            print(f'get url {s} now from {rank}')
             yield s
     else:
         for s in src:
@@ -343,7 +342,8 @@ def get_wds_data(args, is_train, floor=False):
     if is_train:
         if not resampled:
             num_shards = len(expand_urls(input_shards)[0])
-            assert num_shards/num_sub_epochs >= num_workers * world_size, 'number of shards of subset must be >= total workers'
+            print(f'number of shards of subset{num_shards/num_sub_epochs} is >= total workers {num_workers * world_size}')
+            assert num_shards/num_sub_epochs >= num_workers * world_size, f'number of shards of subset{num_shards/num_sub_epochs} must be >= total workers{num_workers * world_size}'
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
 
     dataloader = wds.WebLoader(
