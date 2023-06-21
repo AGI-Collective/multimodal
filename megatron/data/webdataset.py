@@ -1,21 +1,12 @@
-import ast
-import json
 import logging
 import math
 import os
 import random
 import sys
-from dataclasses import dataclass
 from multiprocessing import Value
 
-import braceexpand
-import numpy as np
-import pandas as pd
-import torch
 import webdataset as wds
-from PIL import Image
 from torch.utils.data import  DataLoader,  IterableDataset, get_worker_info
-from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 from megatron import mpu
 from typing import List, Tuple
@@ -208,7 +199,6 @@ class SimpleShardList2(IterableDataset):
         :param urls: a list of URLs as a Python list or brace notation string
         """
         super().__init__()
-        urls,_ = expand_urls(urls)
         self.urls = urls
         assert isinstance(self.urls[0], str)
         self.seed = seed
@@ -248,14 +238,12 @@ def image_text_dict_collation_fn(samples):
     batched = list(zip(*samples))
     result = dict()
     import torch
-    import numpy as np
     for b in batched:
         b = torch.stack(list(b))
         if b.dim()>=3: # dim means image
             result['img']=b
         else:
             result['text']=b
-    
     return result
 
 def get_data_parallel_info():    
@@ -277,19 +265,18 @@ def my_split_by_node(src):
 def get_wds_data(args, is_train, floor=False):
     input_shards = args.train_data_paths if is_train else args.valid_data_paths
     rank, world_size = get_data_parallel_info() # get world_size as data-parallel-world-size
-    resampled = getattr(args, 'dataset_resampled', False)
+    resampled = getattr(args, 'dataset_resampled', False) or not is_train # validate is resample for now
     round_fn = math.floor if floor else math.ceil
     assert input_shards is not None
-    input_weights = args.train_data_weights if is_train else args.valid_data_weights
     if is_train:
       num_samples = args.train_num_samples
     else:
         # Eval will just exhaust the iterator if the size is not specified.
         num_samples = args.val_num_samples or 0 
-    weights, weighted_num_samples = get_normalized_weights_and_num_samples(input_weights, num_samples)
-    shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
+        input_weights = args.train_data_weights if is_train else args.valid_data_weights
+        weights, weighted_num_samples = get_normalized_weights_and_num_samples(input_weights, num_samples)
         complete_url_list = []
         complete_weights = []
         for i, (urls, weights) in enumerate(zip(input_shards, weights)):
@@ -315,14 +302,17 @@ def get_wds_data(args, is_train, floor=False):
             num_workers = max(1, args.num_workers)
             num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
             num_batches = num_worker_batches * num_workers
-            train_one_epoch_iters = num_batches 
-            num_sub_epochs = round_fn(train_one_epoch_iters / args.checkpoint_factor)
+            num_sub_epochs = round_fn(num_batches / args.checkpoint_factor)
             assert (
                 args.checkpoint_scale == 'linear'
-                    ), f'webdataset only works with linear checkpoint saving way'
+                    ), f'webdataset without data resample only works with linear checkpoint saving way'
         else:
             num_sub_epochs = 1 # val don't need to recover from iter
-        pipeline = [SimpleShardList2(input_shards, epoch=args.shared_epoch, num_sub_epochs=num_sub_epochs)]
+        complete_url_list = []
+        for i, urls in enumerate(input_shards):
+            current_url_list = expand_urls(urls)[0]
+            complete_url_list.extend(current_url_list)
+        pipeline = [SimpleShardList2(complete_url_list, epoch=args.shared_epoch, num_sub_epochs=num_sub_epochs)]
 
     # at this point we have an iterator over all the shards
     if is_train:
@@ -370,7 +360,7 @@ def get_wds_data(args, is_train, floor=False):
 
     if is_train:
         if not resampled:
-            num_shards = len(expand_urls(input_shards)[0])
+            num_shards = len(complete_url_list)
             print(f'number of shards of subset{num_shards/num_sub_epochs} is >= total workers {num_workers * world_size}')
             assert num_shards/num_sub_epochs >= num_workers * world_size, f'number of shards of subset{num_shards/num_sub_epochs} must be >= total workers{num_workers * world_size}'
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
