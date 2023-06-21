@@ -17,8 +17,8 @@ from PIL import Image
 from torch.utils.data import  DataLoader,  IterableDataset, get_worker_info
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
-
 from megatron import mpu
+from typing import List, Tuple
 
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
@@ -29,7 +29,22 @@ class SharedEpoch:
 
     def get_value(self):
         return self.shared_epoch.value
+     
 
+def get_normalized_weights_and_num_samples(
+    weights: List[float], num_samples: int
+) -> Tuple[List[float], List[int]]:
+    # Normalize weights
+    weight_sum = sum(weights)
+    assert weight_sum > 0.0
+    weights = [weight / weight_sum for weight in weights]
+    # Add 0.5% (the 1.005 factor) so in case the blending dataset does
+    # not uniformly distribute the number of samples, we still have
+    # samples left to feed to the network.
+    weighted_num_samples = []
+    for weight in weights:
+        weighted_num_samples.append(int(math.ceil(num_samples * weight * 1.005)))
+    return weights, weighted_num_samples
 
 def expand_urls(urls, weights=None):
     if weights is None:
@@ -262,14 +277,29 @@ def my_split_by_node(src):
 def get_wds_data(args, is_train, floor=False):
     input_shards = args.train_data_paths if is_train else args.valid_data_paths
     rank, world_size = get_data_parallel_info() # get world_size as data-parallel-world-size
-    resampled = getattr(args, 'dataset_resampled', False) and is_train
+    resampled = getattr(args, 'dataset_resampled', False)
     round_fn = math.floor if floor else math.ceil
     assert input_shards is not None
+    input_weights = args.train_data_weights if is_train else args.valid_data_weights
+    if is_train:
+      num_samples = args.train_num_samples
+    else:
+        # Eval will just exhaust the iterator if the size is not specified.
+        num_samples = args.val_num_samples or 0 
+    weights, weighted_num_samples = get_normalized_weights_and_num_samples(input_weights, num_samples)
+    shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
     
     if resampled:
+        complete_url_list = []
+        complete_weights = []
+        for i, (urls, weights) in enumerate(zip(input_shards, weights)):
+            current_url_list = expand_urls(urls)[0]
+            complete_url_list.extend(current_url_list)
+            per_url_weight = weights / len(current_url_list)
+            complete_weights.extend([per_url_weight] * len(current_url_list))
         pipeline = [ResampledShards2(
-            input_shards,
-            weights=args.train_data_upsampling_factors,
+            complete_url_list,
+            weights=complete_weights,
             deterministic=True,
             epoch=args.shared_epoch,
         )]
@@ -321,17 +351,16 @@ def get_wds_data(args, is_train, floor=False):
     preprocess_img = get_clip_transforms(image_size=args.image_size)
     
     assert (
-        args.tokenizer.name in ['HFGPT2Tokenizer','HFGPT2TokenizerFast']
-        ), f"Webdataset only support HFGPT2Tokenizer or HFGPT2TokenizerFast"
+        args.tokenizer.name in ['HFGPT2Tokenizer','HFGPT2TokenizerFast','HFTokenizer']
+        ), f"Webdataset only support HFTokenizer, HFGPT2Tokenizer or HFGPT2TokenizerFast"
     
     tokenize = args.tokenizer.tokenize
-    seq_length = args.seq_length
     
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img,  text=lambda text: tokenize(text,seq_length)[0]),
+        wds.map_dict(image=preprocess_img,  text=lambda text: tokenize(text)[0]),
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, collation_fn=image_text_dict_collation_fn, partial=not is_train)
     ])
