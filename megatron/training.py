@@ -842,12 +842,10 @@ def train(
     overflow_monitor = OverflowMonitor(optimizer)
     while iteration < neox_args.train_iters:
         # rebuild data-iter when updating sub shared-epoch
-        if  train_data_iterator is not None and iteration in neox_args.save_iters:
+        if not neox_args.dataset_resampled and train_data_iterator is not None and iteration in neox_args.save_iters:
             sub_epoch_num = int(iteration / neox_args.checkpoint_factor)
             print_rank_0(f'reset shared epoch value to {sub_epoch_num}')
-            neox_args.shared_epoch.set_value(sub_epoch_num)
-            if train_dataloader is not None:
-                train_data_iterator = iter(train_dataloader)            
+            neox_args.shared_epoch.set_value(sub_epoch_num)      
         
         loss_dict, skipped_iter = train_step(
             neox_args=neox_args,
