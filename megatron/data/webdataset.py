@@ -169,7 +169,6 @@ class ResampledShards2(IterableDataset):
     def __iter__(self):
         """Return an iterator over the shards."""
         epoch = self.epoch.get_value()
-        print(f'start at {epoch} sub epoch')
         if self.deterministic:
             # reset seed w/ epoch if deterministic
             if self.worker_seed is None:
@@ -179,7 +178,6 @@ class ResampledShards2(IterableDataset):
                 seed = self.worker_seed() + epoch
             self.rng.seed(seed)
         for _ in range(self.nshards):
-            print(f'get url {self.rng.choice(self.urls)} now from {os.environ["RANK"]}')
             if self.weights is None:
                 yield dict(url=self.rng.choice(self.urls))
             else:
@@ -228,7 +226,6 @@ class SimpleShardList2(IterableDataset):
         if self.num_sub_epochs is not None:
             urls = urls[epoch % self.num_sub_epochs::self.num_sub_epochs]
 
-        print(f'start at {epoch} sub epoch with number {self.num_sub_epochs} with {len(urls)} shards and total shards{len(self.urls.copy())}')
         for url in urls:
             yield dict(url=url)
 
@@ -252,11 +249,10 @@ def get_data_parallel_info():
     return rank, world_size
 
 from itertools import islice
-def my_split_by_node(src):
+def split_by_node2(src):
     rank, world_size = get_data_parallel_info()
     if world_size > 1:
         for s in islice(src, rank, None, world_size):
-            print(f'get url {s} now from {rank}')
             yield s
     else:
         for s in src:
@@ -319,7 +315,7 @@ def get_wds_data(args, is_train, floor=False):
         if not resampled:
             pipeline.extend([
                 # wds.split_by_node,
-                my_split_by_node,
+                split_by_node2,
                 wds.split_by_worker,
             ])
         pipeline.extend([
@@ -370,7 +366,7 @@ def get_wds_data(args, is_train, floor=False):
         batch_size=None,
         shuffle=False,
         num_workers=args.num_workers,
-        persistent_workers=not (args.num_workers == 0),  # set persistent_workers to false if num_workers is 0
+        persistent_workers=args.num_workers > 0,  # set persistent_workers to false if num_workers is 0
     )
     
     return dataloader
