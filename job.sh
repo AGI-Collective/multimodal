@@ -1,5 +1,5 @@
 #!/bin/bash
-#BSUB -nnodes 1
+#BSUB -nnodes 92
 #BSUB -W 2:00 
 #BSUB -q batch
 #BSUB -o gpt_neox_out.%J
