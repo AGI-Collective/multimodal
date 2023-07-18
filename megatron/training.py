@@ -228,7 +228,6 @@ def pretrain(neox_args):
                 model=model,
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
-                input_tag = time_since_epoch,
             )
 
         iteration = train(
@@ -261,7 +260,6 @@ def pretrain(neox_args):
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            input_tag = time_since_epoch,
         )
 
     if neox_args.do_test:
@@ -886,7 +884,6 @@ def train(
                 model=model,
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
-                input_tag = time_since_epoch,
             )
 
         # Evaluation
