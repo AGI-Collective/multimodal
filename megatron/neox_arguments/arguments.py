@@ -420,8 +420,9 @@ class NeoXArgs(*BASE_CLASSES):
             help="Only need this (at this stage) for autotuning",
         )
         args_parsed, _ = parser.parse_known_args()
-        with open(args_parsed.megatron_config) as jsonfile:
-            megatron_config = json.load(jsonfile)
+        megatron_config = json.loads(
+            base64.urlsafe_b64decode(args_parsed.megatron_config).decode("utf-8")
+        )
         if args_parsed.deepspeed_config is not None:
             overwrite_values = cls.set_up_autotuning(
                 args_parsed.deepspeed_config, overwrite_values
@@ -557,16 +558,15 @@ class NeoXArgs(*BASE_CLASSES):
             ).decode("utf-8")
             args_list.append(encoded_ds_config)
 
-        megatron_fp = cwd / Path("megatron_config.json")
         # get all config values
         args_list.append("--megatron_config")
-        args_list.append(str(megatron_fp))
         neox_args = self.get_parent_class_value_dict(
             *self.__class__.__bases__, only_non_defaults=True
         )
-        if self.rank == 0:
-            with open(megatron_fp, mode="w") as megafile:
-                json.dump(neox_args, megafile)
+        encoded_mega_config = base64.urlsafe_b64encode(
+            json.dumps(neox_args).encode("utf-8")
+        ).decode("utf-8")
+        args_list.append(str(encoded_mega_config))
         return args_list
 
     ############################################################################################################################
@@ -784,7 +784,7 @@ class NeoXArgs(*BASE_CLASSES):
         else:
             assert (
                 False
-            ), "Either train_batch_size or micro_batch_per_gpu needs to be provided"
+            ), "Either train_batch_size or train_micro_batch_size_per_gpu needs to be provided"
         return int(train_batch), int(micro_batch), int(grad_acc)
 
     @staticmethod
@@ -907,17 +907,35 @@ class NeoXArgs(*BASE_CLASSES):
             save_iters = list(save_iters)
             save_iters.sort()
 
-        self.update_values(
-            {
-                "save_iters": save_iters,
-            }
-        )
+            self.update_values(
+                {
+                    "save_iters": save_iters,
+                }
+            )
 
         # derive precision
-        if (self.fp16 or {}).get("type", self.precision) == "bfloat16":
-            self.update_value("precision", "bfloat16")
-        elif (self.fp16 or {}).get("enabled", False):
-            self.update_value("precision", "fp16")
+        fp16_conflict = "DeepSpeed fp16 field was set but precision conflicts"
+        if self.fp16 and self.fp16.get("enabled", False):
+            if self.precision is None:
+                self.update_value("precision", "fp16")
+            else:
+                assert self.precision == "fp16", fp16_conflict
+
+        if self.precision == "fp16":
+            if isinstance(self.fp16, dict) and len(self.fp16) > 0:
+                fp16_args = copy.deepcopy(self.fp16)
+                fp16_args["enabled"] = True
+            else:
+                fp16_args = {"type": "fp16", "enabled": True}
+            self.update_value("fp16", fp16_args)
+        elif self.precision == "bfloat16":
+            bf_config = {"bf16": {"enabled": True}}
+            if self.deepspeed_extra_args is None:
+                self.update_value("deepspeed_extra_args", bf_config)
+            else:
+                extra_args = copy.deepcopy(self.deepspeed_extra_args)
+                extra_args.update(bf_config)
+                self.update_value("deepspeed_extra_args", extra_args)
         else:
             self.update_value("precision", "fp32")
 

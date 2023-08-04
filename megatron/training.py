@@ -277,7 +277,14 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
 
     # Unpack.
     tokens_ = data_b["text"].long()
-    labels = tokens_[:, 1:].contiguous()
+    if "label" in data_b:
+        labels = torch.where(
+            data_b["label"].long() >= 0,
+            data_b["label"].long(),
+            torch.zeros_like(data_b["label"].long()),
+        )[:, 1:].contiguous()
+    else:
+        labels = tokens_[:, 1:].contiguous()
     tokens = tokens_[:, :-1].contiguous()
 
     # Get the masks and position ids.
@@ -286,7 +293,9 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         eod_token=neox_args.tokenizer.eod,
         eod_mask_loss=neox_args.eod_mask_loss,
     )
-
+    # If `label` is present, any token < 0 (e.g., -100, the default for torch) skips the loss computation
+    if "label" in data_b:
+        loss_mask = (data_b["label"][:, 1:] >= 0).to(loss_mask.dtype)
     return tokens, labels, loss_mask, attention_mask, position_ids
 
 
@@ -294,7 +303,7 @@ def get_batch(neox_args, data_iterator):
     """Generate a batch"""
 
     # Items and their type.
-    keys = ["text"]
+    keys = ["text", "label"] if neox_args.label_data_paths else ["text"]
     datatype = torch.int64
 
     # Broadcast data.
@@ -314,7 +323,7 @@ def get_batch(neox_args, data_iterator):
 def get_batch_pipe(data, neox_args, curr_scheduler=None):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
     # Items and their type.
-    keys = ["text"]
+    keys = ["text", "label"] if neox_args.label_data_paths else ["text"]
     datatype = torch.int64
 
     tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
@@ -447,6 +456,12 @@ def get_optimizer(model, neox_args):
     """Set up the optimizer."""
     if neox_args.no_load_optim:
         return None, None
+
+    if neox_args.optimizer is None:
+        print_rank_0(
+            f"ERROR: Optimizer is None. Either set the optimizer dict in your config (if training) or set no_load_optim in your config (if inference)"
+        )
+        exit()
     # Build parameter groups (weight decay and non-decay).
     param_groups = get_params_for_weight_decay_optimization(model, neox_args)
     print_rank_0(
@@ -618,7 +633,8 @@ def setup_model_and_optimizer(neox_args, use_cache=False, iteration=None):
             lr_scheduler=_lr_scheduler,
             dist_init_required=False,
             model_parameters=_model_params,
-            config_params=neox_args.deepspeed_config,
+            # Need to remove the below so that it doesn't conflict with --deepspeed_config required by autotuning
+            # config_params=neox_args.deepspeed_config,
             mpu=mpu if not neox_args.is_pipe_parallel else None,
         )
         model.total_params = get_total_params(model.module)
@@ -785,8 +801,8 @@ def train(
         )
         iteration += 1
         neox_args.iteration = iteration
-
-        overflow_monitor.check(skipped_iter)  # check for repeated overflow
+        if neox_args.precision == "fp16":
+            overflow_monitor.check(skipped_iter)  # check for repeated overflow
         if neox_args.log_gradient_noise_scale:  # log noise scale if applicable
             noise_scale_logger.update()
 

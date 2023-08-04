@@ -111,7 +111,7 @@ Logging Arguments
 
 - **git_hash**: str
 
-    Default = 3e79a32
+    Default = e16af33
 
     current git hash of repository
 
@@ -135,7 +135,7 @@ Logging Arguments
 
 - **log_interval**: int
 
-    Default = None
+    Default = 100
 
     Interval between logging.
 
@@ -399,11 +399,11 @@ Model Arguments
 
 
 
-- **activation**: typing.Literal['gelu', 'geglu', 'relu', 'softsign', 'swish', 'mish']
+- **activation**: typing.Literal['gelu', 'geglu', 'relu', 'softsign', 'swish', 'mish', 'silu']
 
     Default = gelu
 
-    Activation function to use - choose from ["gelu", "geglu", "relu", "softsign", "swish", "mish"]
+    Activation function to use - choose from ["gelu", "geglu", "relu", "softsign", "swish", "mish", "silu"]
 
 
 
@@ -547,6 +547,32 @@ Model Arguments
 
 
 
+- **use_bias_in_norms**: bool
+
+    Default = True
+
+    If false, norms (e.g. LayerNorm) will not have bias terms
+
+
+
+- **use_bias_in_attn_linear**: bool
+
+    Default = True
+
+    If false, attn_linear (e.g. QKVO) will not have bias terms
+
+
+
+- **mlp_type**: str
+
+    Default = regular
+
+    Types:
+        regular: Megatron implementation
+        llama: LLaMA MLP (SiLU-gated MLP)
+
+
+
 - **soft_prompt_tuning**: dict
 
     Default = None
@@ -561,9 +587,9 @@ Model Arguments
 
 
 
-- **output_layer_parallelism**: typing.Literal['row', 'column']
+- **output_layer_parallelism**: typing.Literal['column']
 
-    Default = row
+    Default = column
 
     Parameter controlling whether the output layer is parallelized over the hidden dim (row) or the vocab dim (column)
 
@@ -1033,6 +1059,14 @@ Training Arguments
     Default = None
 
     List of paths to train datasets.
+
+
+
+- **label_data_paths**: list
+
+    Default = None
+
+    List of paths to label datasets (not shifted by 1 yet!).
 
 
 
@@ -1654,6 +1688,14 @@ Args for deepspeed config
 
 
 
+- **bf16**: dict
+
+    Default = None
+
+    Configuration for using bfloat16 floating-point format as an alternative to FP16. BFLOAT16 requires hardware support (e.g., NVIDIA A100). Dictionary options as described in Deepspeed documentation: https://www.deepspeed.ai/docs/config-json/#bfloat16-training-options
+
+
+
 - **amp**: dict
 
     Default = None
@@ -1737,16 +1779,6 @@ Args for deepspeed config
     Default = None
 
     During gradient averaging, perform communication with selected data type. By default it will be determined by selected regime
-
-
-
-- **bf16**: dict
-
-    Default = None
-
-    Configuration for using bfloat16 floating-point format as an alternative to FP16. BFLOAT16 requires hardware support (e.g., NVIDIA A100).
-
-    Dictionary options as described in Deepspeed documentation: https://www.deepspeed.ai/docs/config-json/#bfloat16-training-options
 
 
 
