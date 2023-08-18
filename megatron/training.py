@@ -417,7 +417,8 @@ def get_model(neox_args, use_cache=False):
         topology=mpu.get_topology(),
         use_cache=use_cache,
     )
-    
+    print("original model")
+    print(model)
     ### add adapter
     if neox_args.add_adapters:
         # add on mlp
@@ -429,7 +430,8 @@ def get_model(neox_args, use_cache=False):
         add_adapters(neox_args,
                     model,
                     downsample_factor=neox_args.adaper_downsample_factor,
-                    location='attention') 
+                    location='attention')
+    print("new model", model, flush = True)
     
     ### soft prompt tuning stuff ###
     if neox_args.soft_prompt_tuning is not None and neox_args.soft_prompt_tuning.get(
@@ -453,11 +455,12 @@ def get_model(neox_args, use_cache=False):
 
     ### freeze language model
     if neox_args.freeze_lm:
-        for name,param in model.named_parameters():
+        for name, param in model.named_parameters():
             param.requires_grad = False
-            if "adapter" in name or "image_prefix" in name:
-                param.requires_grad = True 
-    
+            if "adapter" in name or "image_prefix" in name or "lora" in name:
+                param.requires_grad = True
+            print(name, param.requires_grad)
+
     if not neox_args.is_pipe_parallel:
         # Export PipeParallel model to nn.Sequential model to avoid the overhead of deepspeed's pipe parallel training
         model = model.to_sequential()
