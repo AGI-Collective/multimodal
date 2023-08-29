@@ -28,6 +28,7 @@ from megatron.data.samplers import DistributedBatchSampler
 from streaming import MDSWriter, StreamingDataset
 from torch.utils.data import DataLoader
 from megatron.data.streaming_dataset.text.dataloader import build_text_dataloader, build_tokenizer
+from megatron.data.streaming_dataset.interleaved_text_image.dataloader import build_interleaved_dataloader
 
 from streaming import Stream, StreamingDataset
 from omegaconf import OmegaConf as om
@@ -322,7 +323,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         # the location of the "remote" streaming dataset (`sds`).
         # Upload `out_root` to your cloud storage provider of choice. If `out_root` is a cloud provider
         # path, shard files are automatically uploaded.
-        local_path = "/p/fastdata/mmlaion/hummingbird/streaming/text"
+        local_path = "/p/fastdata/mmlaion/hummingbird/streaming/interleaved"
         
         cfg = {
             'name': 'text',
@@ -346,11 +347,11 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         tokenizer_cfg = om.create(tokenizer_cfg)
         tokenizer = build_tokenizer(tokenizer_cfg)
 
-        train_dataloader = build_text_dataloader(cfg, tokenizer, device_batch_size)
+        train_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
         cfg['dataset']['split'] = "validation"
-        valid_dataloader = build_text_dataloader(cfg, tokenizer, device_batch_size)
+        valid_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
         cfg['dataset']['split'] = "test"
-        test_dataloader = build_text_dataloader(cfg, tokenizer, device_batch_size)
+        test_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
 
         # Flags to know if we need to do training/validation/testing.
         do_train = train_dataloader is not None and neox_args.train_iters > 0

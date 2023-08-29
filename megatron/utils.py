@@ -75,11 +75,27 @@ def get_attn_mask(seq_length, device):
     # convert to binary
     return mask < 0.5
 
+def get_multimodal_attn_mask(seq_length, multimodal_position_ids, sequence_id, attn_uses_sequence_id, device):
+    """
+    Get triangular attention mask for a given sequence length / device.
+    """
+    # lower triangular attention mask
+    mask = torch.tril(torch.ones((1, seq_length, seq_length), device=device)).view(
+        1, 1, seq_length, seq_length
+    )
+
+    # convert to binary
+    return mask < 0.5
+
 
 def get_ltor_masks_and_position_ids(
     data,
+    multimodal_position_ids,
     eod_token,
     eod_mask_loss=False,
+    sequence_id=None,
+    attn_uses_sequence_id=False,
+    pad_token=None,
 ):
     """Build masks and position id for left to right model."""
 
@@ -87,8 +103,11 @@ def get_ltor_masks_and_position_ids(
     batch_size, seq_length = data.size()
 
     # Attention mask (lower triangular).
-    attention_mask = get_attn_mask(
+    attention_mask = get_multimodal_attn_mask(
         seq_length=seq_length,
+        multimodal_position_ids=multimodal_position_ids,
+        sequence_id=sequence_id,
+        attn_uses_sequence_id=attn_uses_sequence_id,
         device=data.device,
     )
 
@@ -96,8 +115,12 @@ def get_ltor_masks_and_position_ids(
     loss_mask = torch.ones(data.size(), dtype=torch.float, device=data.device)
     if eod_mask_loss:
         loss_mask[data == eod_token] = 0.0
+    if pad_token is not None:
+        loss_mask[data == pad_token] = 0.0
+    
+    # Apply loss mask for all the multimodal input tokens  # TODO
 
-    # Position ids.
+    # Position ids. # TODO
     position_ids = torch.arange(seq_length, dtype=torch.long, device=data.device)
     position_ids = position_ids.unsqueeze(0).expand_as(data)
 

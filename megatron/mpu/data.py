@@ -19,7 +19,7 @@ from .initialize import get_model_parallel_rank
 from .initialize import get_model_parallel_src_rank
 
 
-_MAX_DATA_DIM = 4
+_MAX_DATA_DIM = 6 # Images + Multimodal Position Ids
 
 
 def _check_data_types(keys, data, target_dtype):

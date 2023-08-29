@@ -275,7 +275,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
 
-    # Unpack.
+    # Unpack text.
     tokens_ = data_b["text"].long()
     if "label" in data_b:
         labels = torch.where(
@@ -287,23 +287,39 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         labels = tokens_[:, 1:].contiguous()
     tokens = tokens_[:, :-1].contiguous()
 
+    # Unpack images.
+    images = data_b["images"].half().contiguous()
+
+    # Unpack multimodal position ids.
+    multimodal_position_ids = data_b["multimodal_position_ids"].long().contiguous()
+
     # Get the masks and position ids.
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
         data=tokens,
+        multimodal_position_ids=multimodal_position_ids,
         eod_token=neox_args.tokenizer.eod,
         eod_mask_loss=neox_args.eod_mask_loss,
+        sequence_id=data_b["sequence_id"].long().contiguous() if neox_args.concat_data else None, # TODO
+        attn_uses_sequence_id=neox_args.attn_uses_sequence_id # TODO
     )
     # If `label` is present, any token < 0 (e.g., -100, the default for torch) skips the loss computation
     if "label" in data_b:
         loss_mask = (data_b["label"][:, 1:] >= 0).to(loss_mask.dtype)
-    return tokens, labels, loss_mask, attention_mask, position_ids
+    return tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids
 
 
 def get_batch(neox_args, data_iterator):
     """Generate a batch"""
 
     # Items and their type.
-    keys = ["text", "label"] if neox_args.label_data_paths else ["text"]
+    keys =  ["text", "images", "multimodal_position_ids"]
+    
+    if neox_args.concat_data:
+        keys.append("sequence_id")
+
+    if neox_args.label_data_paths:
+        keys = keys.append("label")
+
     datatype = torch.int64
 
     # Broadcast data.
@@ -323,10 +339,17 @@ def get_batch(neox_args, data_iterator):
 def get_batch_pipe(data, neox_args, curr_scheduler=None):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
     # Items and their type.
-    keys = ["text", "label"] if neox_args.label_data_paths else ["text"]
+    keys =  ["text", "images", "multimodal_position_ids"]
+    
+    if neox_args.concat_data:
+        keys.append("sequence_id")
+
+    if neox_args.label_data_paths:
+        keys = keys.append("label")
+
     datatype = torch.int64
 
-    tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
+    tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = _get_batch(
         neox_args, neox_args.tokenizer, keys, data, datatype
     )
     if curr_scheduler is not None:
@@ -348,7 +371,7 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
             ].contiguous()
 
     # unpack data
-    return (tokens, position_ids, attention_mask), (labels, loss_mask)
+    return (tokens, images, multimodal_position_ids, position_ids, attention_mask), (labels, loss_mask)
 
 
 def forward_step(
@@ -361,14 +384,14 @@ def forward_step(
     # Get the batch.
     if timers is not None:
         timers("batch generator").start()
-    tokens, labels, loss_mask, attention_mask, position_ids = get_batch(
+    tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = get_batch(
         neox_args=neox_args, data_iterator=data_iterator
     )
 
     if timers is not None:
         timers("batch generator").stop()
 
-    outputs = model((tokens, position_ids, attention_mask), neox_args=neox_args)
+    outputs = model((tokens, images, multimodal_position_ids, position_ids, attention_mask), neox_args=neox_args)
     if (
         is_train
         and neox_args.curriculum_learning

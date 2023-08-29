@@ -666,6 +666,16 @@ class NeoXArgsOther(NeoXArgsTemplate):
     Set during launching
     """
 
+    concat_data: bool = True
+    """
+    Concatenate the data files for training.
+    """
+
+    attn_uses_sequence_id: bool = False
+    """
+    Include sequence id as attention bias.
+    """
+
 
 @dataclass
 class NeoXArgsTokenizer(NeoXArgsTemplate):

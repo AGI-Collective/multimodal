@@ -19,7 +19,7 @@ from torch.nn.parameter import Parameter
 from megatron import mpu
 from megatron.model.positional_embeddings import SinusoidalPositionalEmbedding
 from megatron.model.init_functions import get_init_methods
-
+# from megatron.model.encoders.image_encoders import ImageEncoder
 
 class Embedding(torch.nn.Module):
     """Language model embeddings.
@@ -161,9 +161,30 @@ class Embedding(torch.nn.Module):
 
         return embeddings
 
+# Simple module that takes as input a batch of images [B, T, H, W, C] and returns a batch of embeddings [B, T, E]
+class ImageEncoder(torch.nn.Module):
+    # Simple image encoder that flattens the image and does a forward pass through a linear layer
+
+    def __init__(self, neox_args):
+        super().__init__()
+        self.neox_args = neox_args
+        self.encoder_layer = torch.nn.Linear((224*224*3), neox_args.hidden_size)
+
+    def forward(self, images):
+        batch_size = images.shape[0]
+        max_seq_len = images.shape[1]
+        images = images.reshape(batch_size*max_seq_len, -1)
+        embeddings = self.encoder_layer(images)
+        embeddings = embeddings.reshape(batch_size, max_seq_len, -1)
+        return embeddings
+
 
 class EmbeddingPipe(Embedding):
     """Extends Embedding to forward attention_mask through the pipeline."""
+
+    def __init__(self, neox_args, *args, **kwargs):
+        super().__init__(neox_args, *args, **kwargs)
+        self.image_encoder = ImageEncoder(neox_args)
 
     @property
     def word_embeddings_weight(self):
@@ -172,13 +193,29 @@ class EmbeddingPipe(Embedding):
 
     def forward(self, args):
         assert (
-            len(args) == 3
-        ), f"Expected 3 arguments (input_ids, position_ids, attention_mask), but got {len(args)}."
+            len(args) == 5
+        ), f"Expected 3 arguments (input_ids, images, multimodal_position_ids, position_ids, attention_mask), but got {len(args)}."
 
         input_ids = args[0]
-        position_ids = args[1]
-        attention_mask = args[2]
-        embeddings = super().forward(input_ids, position_ids)
+        images = args[1]
+        multimodal_position_ids = args[2]
+        position_ids = args[3]
+        attention_mask = args[4]
+        word_embeddings = super().forward(input_ids, position_ids) # [B, T, E]
+        image_embeddings = self.image_encoder(images) # [B, T, E]
+        # Concatenate the embeddings based on the multimodal position ids # TODO
+        number_of_modalities = multimodal_position_ids.shape[0]
+        batch_size = multimodal_position_ids.shape[1]
+        max_seq_len = multimodal_position_ids.shape[2]
+    
+        embeddings = torch.zeros((batch_size, max_seq_len, self.hidden_size)).to(
+            word_embeddings.device
+        )
+
+        multimodal_position_ids = multimodal_position_ids.permute(1, 0, 2).reshape(batch_size, -1) #TODO Check
+
+        embeddings[multimodal_position_ids] = torch.cat([word_embeddings, image_embeddings], dim=1)
+        
         return embeddings, attention_mask
 
 
