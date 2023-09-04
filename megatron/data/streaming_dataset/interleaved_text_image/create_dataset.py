@@ -79,7 +79,7 @@ class ConcatTokensDataset(IterableDataset):
         self.hf_dataset = hf_dataset
         self.tokenizer = tokenizer
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-        self.max_length = max_length - 10 # FIX THIS
+        self.max_length = max_length - 10 # FIX THIS # TODO
         self.bos_text = bos_text
         self.eos_text = eos_text
         self.should_wrap = not no_wrap
@@ -126,20 +126,21 @@ class ConcatTokensDataset(IterableDataset):
             iids = encoded['input_ids']
             buffer = buffer + self.bos_tokens + iids + self.eos_tokens
             # Create a np array of random images (B, H, W, C) and convert to bytes and store in sample['images']
-            images = np.random.randint(0, 255, size=(10, 224, 224, 3)).astype(np.uint8).tobytes()
-            
+            images = np.random.randint(0, 255, size=(10, 224, 224, 3))
             while len(buffer) >= self.max_length:
                 concat_sample = buffer[:self.max_length]
                 buffer = buffer[self.max_length:] if self.should_wrap else []
 
-                multimodal_position_ids = [torch.tensor(list(range(len(concat_sample)))), torch.tensor(list(range(len(concat_sample), len(concat_sample) + 10)))]
+                multimodal_position_ids = [torch.tensor(list(range(len(concat_sample)))), torch.tensor(list(range(len(concat_sample), len(concat_sample) + 10)))] # M, T
                 multimodal_position_ids = pad_sequence(multimodal_position_ids, batch_first=True, padding_value=-1)
                 multimodal_position_ids = multimodal_position_ids.numpy()
+                labels = np.random.randint(0, 2, size=(self.max_length+10))
                 yield {
                     # convert to bytes to store in MDS binary format
                     'tokens': np.asarray(concat_sample).tobytes(),
                     'images': images,
-                    'multimodal_position_ids': multimodal_position_ids
+                    'multimodal_position_ids': multimodal_position_ids,
+                    'labels': labels,
                 }
     
 class ConcatMode(Enum):
@@ -299,7 +300,7 @@ def main(args: Namespace) -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
         # we will enforce length, so suppress warnings about sequences too long for the model
         tokenizer.model_max_length = int(1e30)
-        columns = {'tokens': 'bytes', 'images': 'bytes', 'multimodal_position_ids': 'ndarray'}
+        columns = {'tokens': 'bytes', 'images': 'ndarray', 'multimodal_position_ids': 'ndarray', 'labels': 'ndarray'}
     else:
         mode = ConcatMode.NO_CONCAT
         tokenizer = None
