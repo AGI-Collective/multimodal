@@ -87,39 +87,34 @@ class DinoWrapper(nn.Module):
         return self.model(x)
 
 ENCODER_OUT_DIMS = {
-    "nfresnet50": 2048,
     "clip": 512,
-    "clip_resnet": 2560,
-    "clip_resnet_large": 3072,
     "openclip-H": 1024,
 }
 
 ENCODER_SEQ_LENS = {
-    "clip_resnet": 49,
-    "clip_resnet_large": 144,
     "openclip-H": 257
 }
 
-def get_video_encoder(
+def get_vision_encoder(
     name: str, 
     device: Union[torch.device, str] = None, 
     pretrained: bool = False,
     cache_path: str = None
 ) -> torch.nn.Module:
     """
-    Loads video encoder module
+    Loads vision encoder module
     """
     if name == "dinov2":
         encoder = DinoWrapper(DinoVisionTransformer(config))
     else:
-        raise ValueError(f"video encoder {name} not recognized")
+        raise ValueError(f"vision encoder {name} not recognized")
     return encoder
 
 # Vision encoder 
-class videoEncoder(nn.Module):
+class visionEncoder(nn.Module):
 
     """
-    Takes in a batch of videos and returns a batch of embeddings of the
+    Takes in a batch of visions and returns a batch of embeddings of the
     same dimensions as the LM's word embeddings.
 
     :param config: Neox args
@@ -140,20 +135,20 @@ class videoEncoder(nn.Module):
         self.config = config
         self.encoder_type = config.encoder_name
 
-        # get video encoder backbone
-        self.enc = get_video_encoder(
+        # get vision encoder backbone
+        self.enc = get_vision_encoder(
             config.encoder_name,
             # device=self.device,
             pretrained=config.pretrained_img_encoder,
             cache_path = config.load_clip
         )
 
-        # Add temporal attention into the video encoder
-
+        # Add temporal attention into the vision encoder
+        self.enc.add_temporal_attention()
 
         self.encoder_out_dim = ENCODER_OUT_DIMS[
             self.encoder_type
-        ]  # out dim for video encoder
+        ]  # out dim for vision encoder
 
         self.out_dim = out_dim  # out dim for lm
 
@@ -163,6 +158,10 @@ class videoEncoder(nn.Module):
         if self.use_layernorm:
             self.ln = nn.LayerNorm(self.out_dim)
 
+    '''
+    B, N, T, H, W, C
+    B*N*T, H, W, C
+    '''
     def forward(
         self, x: TensorType["b", "c", "h", "w"]
     ) -> TensorType["b", "seq", "out_dim"]:
