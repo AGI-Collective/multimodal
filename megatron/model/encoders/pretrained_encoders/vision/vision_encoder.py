@@ -18,6 +18,7 @@ from torch import nn
 from torch.nn import LayerNorm, Linear, MultiheadAttention
 
 from dinov2.models import DinoVisionTransformer
+from dinov2.models.vision_transformer import vit_large, vit_small, vit_base
 import dinov2.layers as layers
 
 # Temporal Attention
@@ -105,7 +106,15 @@ def get_vision_encoder(
     Loads vision encoder module
     """
     if name == "dinov2":
-        encoder = DinoWrapper(DinoVisionTransformer(config))
+        dino_model = vit_small(#Could also be vit_base, vit_large, vit_giant
+            patch_size=14,
+            img_size=526,
+            init_values=1.0,
+            block_chunks=0)
+        if pretrained = True:
+            #Load pretrained model from where you saved it before.
+            dino_model.load_state_dict(torch.load("./model.pt"))
+        encoder = DinoWrapper(dino_model)
     else:
         raise ValueError(f"vision encoder {name} not recognized")
     return encoder
