@@ -125,7 +125,7 @@ class DinoWrapper(nn.Module):
         '''
         x: (b, t, f, c, h, w)
         '''
-        b, t, f, c, h, w = x.shape
+        b, t, f, c, h, w = x.shape # b=batch size, t=number of images/videos in a sample, f=number of frames in each image/video, c=number of channels, h=height, w=width
         x = rearrange(x, "b t f c h w -> (b t) f c h w")
         embeddings = self.encoder(x) # B*T, N_E, E
         embeddings = rearrange(embeddings, "(b t) v d -> b t v d", b=b, t=t, v=f)

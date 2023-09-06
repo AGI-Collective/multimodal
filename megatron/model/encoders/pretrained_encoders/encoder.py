@@ -130,7 +130,7 @@ class Encoder(nn.Module):
         self.perceiver = PerceiverResampler(dim=config.encoder_seq_length)
     
     def forward(
-        self, x: TensorType["b", "c", "h", "w"] or TensorType["b", "seq", "c", "h", "w"]
+        self, x: TensorType["b", "t", "c", "h", "w"] or TensorType["b", "t", "f", "c", "h", "w"]
     ) -> TensorType["b", "seq", "out_dim"]:
 
         """
