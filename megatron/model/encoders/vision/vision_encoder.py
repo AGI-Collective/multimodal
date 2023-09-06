@@ -70,17 +70,13 @@ class DinoWrapper(nn.Module):
     
     def freeze_model(self):
         num_layers_to_unfreeze = self.config.num_layers_to_unfreeze
-        
         # Freeze everything
         self.encoder.requires_grad_(False)
-
         # Unfreeze last num_layers_to_unfreeze layers
         for child_name, child in list(self.encoder.named_modules())[-num_layers_to_unfreeze:]:
             child.requires_grad_(True)
-
         # Unfreeze LayerNorm
         recursive_freeze_unfreeze(self.encoder, ['LayerNorm'], freeze=False)
-
         # What about cls token? TODO
     
     def prepare_encoder(self):
@@ -114,6 +110,7 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
     model.load_state_dict(state_dict, strict=False)
     return model
 
+
 def get_vision_encoder(
     args,
     name,
@@ -137,8 +134,7 @@ def get_vision_encoder(
         model = vits.__dict__[name](**vit_kwargs)
         if pretrained:
             model = load_pretrained_weights(model, args.pretrained_weights, "teacher")
-        # encoder = DinoWrapper(model)
-        encoder = model
+        encoder = DinoWrapper(model,args)
     else:
         raise ValueError(f"vision encoder {name} not recognized")
     return encoder
