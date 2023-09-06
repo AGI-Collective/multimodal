@@ -58,7 +58,7 @@ class ObelicsData(IterableDataset):
 if __name__ == "__main__":
 	filepath = "/p/fastdata/mmlaion/obelics/OBELICS/data"
 	converted_filepath = "/p/scratch/ccstdl/mhatre1/obelics_converted"
-	images_filepath = "/p/scratch/ccstdl/mhatre1/multimodal/megatron/data/images"
+	images_filepath = "/p/scratch/ccstdl/mhatre1/obelics_converted_images"
 	dataset = ObelicsData(filepath, converted_filepath, images_filepath)
 	for i in dataset:
 		print(i)
