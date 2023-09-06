@@ -1,82 +1,19 @@
 import torch
 import torch.nn as nn
-from torchtyping import TensorType, patch_typeguard
+from torchtyping import TensorType
 from einops import rearrange
-
-from typing import Callable, Union
-import timm
-import open_clip
-from functools import partial
-import logging
-import math
-
-import einops
-import torch
-from einops import rearrange
-from timm.models.layers.drop import DropPath
-from torch import nn
-from torch.nn import LayerNorm, Linear, MultiheadAttention
-
-from loralib.layers import Linear as LoraLinear
-from loralib.layers import MergedLinear as MergedLoraLinear
-from loralib.layers import Conv2d as LoraConv2d
-
-import torch
-from einops import rearrange, repeat
-from einops_exts import rearrange_many
-from torch import einsum, nn
-
 from perceiver import PerceiverResampler
+from .encoders.audio_encoders import get_audio_encoder
+from .encoders.vision_encoders import get_vision_encoder
 
-from .audio_encoders import get_audio_encoder
-from .vision_encoders import get_vision_encoder
-
-
-def add_lora(self, model):
-    for child_name, child in model.named_children():
-        if isinstance(child, nn.Linear) and child.requires_grad == False:
-            weight = child.weight
-            bias = child.bias
-            if child_name == 'qkv':
-                new = MergedLoraLinear(child.in_features, child.out_features, 
-                            r = 128, dtype = torch.float32, enable_lora = [True,True,True])
-            else:
-                new = LoraLinear(child.in_features, child.out_features, r = 128, dtype = torch.float32)
-            
-            new.weight = weight
-            new.bias = bias
-            setattr(model, child_name, new)
-        elif isinstance(child, nn.Conv2d):
-            weight = child.weight
-            bias = child.bias
-            new = LoraConv2d(child.in_channels, child.out_channels, child.kernel_size[0], r = 128, dtype = torch.float32)                     
-            new.weight = weight
-            new.bias = bias
-            new.stride = child.stride
-            new.padding = child.padding
-            new.dilation = child.dilation
-            setattr(model, child_name, new)
-        else:
-            self.add_lora(child)
-
-def recursive_freeze_unfreeze(self, model, param_types, freeze=True):
-    for child_name, child in model.named_children():
-        child_class_name = child.__class__.__name__
-        if str(child_class_name) in param_types:
-            child.requires_grad = not freeze
-        else:
-            self.recursive_freeze_unfreeze(child, param_types, freeze)
 
 ENCODER_OUT_DIMS = {
-    "clip": 512,
-    "openclip-H": 1024,
     "dinov2_base": 768, 
     "dinov2_large": 1024, 
     "dinov2_small": 384,
 }
 
 ENCODER_SEQ_LENS = {
-    "openclip-H": 257,
     "dinov2_base": 257, 
     "dinov2_large": 257, 
     "dinov2_small": 257,
@@ -120,13 +57,11 @@ class Encoder(nn.Module):
             self.encoder_type
         ]
         self.out_dim = out_dim  # out dim for lm
-
         self.proj = nn.Linear(self.encoder_out_dim, self.out_dim)
         self.dropout = nn.Dropout(config.embed_dropout_prob)
         self.use_layernorm = config.use_embed_layernorm
         if self.use_layernorm:
             self.ln = nn.LayerNorm(self.out_dim)
-        
         self.perceiver = PerceiverResampler(dim=config.encoder_seq_length)
     
     def forward(
