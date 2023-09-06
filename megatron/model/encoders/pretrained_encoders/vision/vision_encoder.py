@@ -20,6 +20,18 @@ from torch.nn import LayerNorm, Linear, MultiheadAttention
 from dinov2.models import DinoVisionTransformer
 from dinov2.models.vision_transformer import vit_large, vit_small, vit_base
 import dinov2.layers as layers
+from loralib.layers import Linear as LoraLinear
+from loralib.layers import MergedLinear as MergedLoraLinear
+from loralib.layers import Conv2d as LoraConv2d
+
+import torch
+from einops import rearrange, repeat
+from einops_exts import rearrange_many
+from torch import einsum, nn
+
+from perceiver import PerceiverResampler
+from encoder import add_lora
+from encoder import recursive_freeze_unfreeze
 
 # Temporal Attention
 class TemporalAttention(nn.Module):
@@ -72,138 +84,72 @@ class TemporalAdapter(nn.Module):
         return self.block(x)
 
 class DinoWrapper(nn.Module):
-    def __init__(self, model):
+    def __init__(self, encoder, config):
         super().__init__()
-        self.model = model
+        self.encoder = encoder
+        self.config = config
+        self.prepare_encoder()
         
     def add_temporal_attention(self):
-        for child_name, child in self.model.named_children():
+        for child_name, child in self.encoder.named_children():
             if isinstance(child, layers.Block):
                 new = TemporalAdapter(child)
-                setattr(self.model, child_name, new)
+                setattr(self.encoder, child_name, new)
             else:
                 self.add_temporal_attention(child)
     
+    def freeze_model(self):
+        num_layers_to_unfreeze = self.config.num_layers_to_unfreeze
+        
+        # Freeze everything
+        self.encoder.requires_grad_(False)
+
+        # Unfreeze last num_layers_to_unfreeze layers
+        for child_name, child in list(self.encoder.named_modules())[-num_layers_to_unfreeze:]:
+            child.requires_grad_(True)
+
+        # Unfreeze LayerNorm
+        recursive_freeze_unfreeze(self.encoder, ['LayerNorm'], freeze=False)
+
+        # What about cls token? TODO
+    
+    def prepare_encoder(self):
+        if self.config.freeze_encoder:
+            self.freeze_model()
+        self.add_temporal_attention()
+        if self.config.add_lora:
+            add_lora(self.encoder)
+
+    
     def forward(self, x):
-        return self.model(x)
-
-ENCODER_OUT_DIMS = {
-    "clip": 512,
-    "openclip-H": 1024,
-}
-
-ENCODER_SEQ_LENS = {
-    "openclip-H": 257
-}
+        '''
+        x: (b, t, f, c, h, w)
+        '''
+        b, t, f, c, h, w = x.shape
+        x = rearrange(x, "b t f c h w -> (b t) f c h w")
+        embeddings = self.encoder(x) # B*T, N_E, E
+        embeddings = rearrange(embeddings, "(b t) v d -> b t v d", b=b, t=t, v=f)
+        return embeddings
 
 def get_vision_encoder(
     name: str, 
     device: Union[torch.device, str] = None, 
     pretrained: bool = False,
-    cache_path: str = None
+    load_path: str = None
 ) -> torch.nn.Module:
     """
     Loads vision encoder module
     """
-    if name == "dinov2":
+    if name == "dinov2_small":
         dino_model = vit_small(#Could also be vit_base, vit_large, vit_giant
             patch_size=14,
             img_size=526,
             init_values=1.0,
             block_chunks=0)
-        if pretrained = True:
+        if pretrained == True:
             #Load pretrained model from where you saved it before.
-            dino_model.load_state_dict(torch.load("./model.pt"))
+            dino_model.load_state_dict(torch.load(load_path))
         encoder = DinoWrapper(dino_model)
     else:
         raise ValueError(f"vision encoder {name} not recognized")
     return encoder
-
-# Vision encoder 
-class visionEncoder(nn.Module):
-
-    """
-    Takes in a batch of visions and returns a batch of embeddings of the
-    same dimensions as the LM's word embeddings.
-
-    :param config: Neox args
-    :param out_dim: output dimension of the embedding
-    :param device: device to run the model on
-    """
-
-    def __init__(
-        self,
-        config,
-        out_dim: int = 2048,
-        device=None,
-    ):
-        super().__init__()
-        self.device = device or torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-        self.config = config
-        self.encoder_type = config.encoder_name
-
-        # get vision encoder backbone
-        self.enc = get_vision_encoder(
-            config.encoder_name,
-            # device=self.device,
-            pretrained=config.pretrained_img_encoder,
-            cache_path = config.load_clip
-        )
-
-        # Add temporal attention into the vision encoder
-        self.enc.add_temporal_attention()
-
-        self.encoder_out_dim = ENCODER_OUT_DIMS[
-            self.encoder_type
-        ]  # out dim for vision encoder
-
-        self.out_dim = out_dim  # out dim for lm
-
-        self.proj = nn.Linear(self.encoder_out_dim, self.out_dim)
-        self.dropout = nn.Dropout(config.image_embed_dropout_prob)
-        self.use_layernorm = config.use_image_embed_layernorm
-        if self.use_layernorm:
-            self.ln = nn.LayerNorm(self.out_dim)
-
-    '''
-    B, N, T, H, W, C
-    B*N*T, H, W, C
-    '''
-    def forward(
-        self, x: TensorType["b", "c", "h", "w"]
-    ) -> TensorType["b", "seq", "out_dim"]:
-
-        # pass through image encoder
-        logits = self.enc(x)
-
-        # remove trailing dimensions of size 1 + pass through linear
-        if logits.ndim == 4:
-            logits = rearrange(logits, "b d 1 1 -> b d")
-        elif logits.ndim == 3:
-            assert self.encoder_type in ENCODER_SEQ_LENS
-        else:
-            assert logits.ndim == 2
-
-        logits = self.proj(logits)
-
-        # reshape to desired output shape
-        if (
-            self.encoder_type not in ENCODER_SEQ_LENS
-        ):  # don't need to reshape those with fixed seq lens / no pooling
-            logits = rearrange(
-                logits, "b (s d) -> b s d", d=self.out_dim, s=self.out_seq_len
-            )
-
-        # pass through dropout and layer norm
-        logits = self.dropout(logits)
-
-        if self.use_layernorm:
-            logits = self.ln(logits)
-
-        # Added for shape mismatch.
-        if logits.ndim == 2:
-            logits = logits.unsqueeze(1)
-
-        return logits
