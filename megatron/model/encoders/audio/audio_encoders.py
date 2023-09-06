@@ -13,7 +13,7 @@ import math
 import einops
 import torch
 from einops import rearrange
-from timm.models.layers.drop import DropPath
+from timm.layers.drop import DropPath
 from torch import nn
 from torch.nn import LayerNorm, Linear, MultiheadAttention
 

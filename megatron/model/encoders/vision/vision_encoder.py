@@ -3,7 +3,7 @@ import torch.nn as nn
 from urllib.parse import urlparse
 import einops
 from einops import rearrange
-# from timm.models.layers.drop import DropPath
+from timm.layers.drop import DropPath
 
 from ..utils import add_lora
 from ..utils import recursive_freeze_unfreeze
