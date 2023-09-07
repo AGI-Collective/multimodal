@@ -79,7 +79,6 @@ def get_vision_encoder(
             # qkv_bias=args.qkv_bias,
             # proj_bias=args.proj_bias,
             # ffn_bias=args.ffn_bias,
-            video_mode=args.video_mode,
         )
         model = vits.__dict__[name](**vit_kwargs)
         if pretrained:
