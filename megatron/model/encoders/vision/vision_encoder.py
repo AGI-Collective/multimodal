@@ -3,66 +3,11 @@ import torch.nn as nn
 from urllib.parse import urlparse
 import einops
 from einops import rearrange
-from timm.layers.drop import DropPath
 
 from ..utils import add_lora
 from ..utils import recursive_freeze_unfreeze
 from .dinov2.models import vision_transformer as vits
 from .dinov2 import layers
-
-# Temporal Attention
-class TemporalAttention(nn.Module):
-    """perform temporal self-attention"""
-    def __init__(self, input_dim=768, droppath_rate=0.1):
-        """
-        Kwargs:
-            input_dim (int): The input feature dimension.
-        """
-        super().__init__()
-
-        self._input_dim = input_dim
-        self.temporal_attn = nn.MultiheadAttention(input_dim, num_heads=input_dim // 64)
-        self.norm = nn.LayerNorm(input_dim, eps=1e-12)
-        self.linear = nn.Linear(input_dim, input_dim)
-        self.droppath = DropPath(droppath_rate)
-        self.scale = nn.parameter.Parameter(torch.zeros([]))
-
-    def forward(self, x: torch.Tensor):
-        """
-        Args:
-            x (torch.Tensor): input features. Shape: [bs, nframes, l, c]. l = 1 + h*w
-        Returns: features after adapter. The same shape as input.
-        """
-        if x.shape[1] == 1:  # for single frame, return itself.
-            return x
-        shortcut = x
-        x = einops.rearrange(x, "b t l c -> t (b l) c")
-        x = self.norm(x)
-        x = self.temporal_attn(x, x, x)[0]
-        x = einops.rearrange(x, "t (b l) c -> b t l c", b=shortcut.shape[0])
-        return shortcut + self.scale * self.droppath(x)
-
-
-class TemporalAdapter(nn.Module):
-    def __init__(self, block):
-        super().__init__()
-        self.block = block
-        self.temporal_attention = TemporalAttention()
-    
-    def forward(self, x):
-        x = self.temporal_attention(x)
-        import pdb;pdb.set_trace()
-        return self.block(x)
-
-
-def add_temporal_attention(model):
-        for child_name, child in model.named_children():
-            if isinstance(child, layers.Block):
-                new = TemporalAdapter(child)
-                setattr(model, child_name, new)
-            else:
-                add_temporal_attention(child)
-
 
 class DinoWrapper(nn.Module):
     def __init__(self, encoder, config):
@@ -85,24 +30,19 @@ class DinoWrapper(nn.Module):
     def prepare_encoder(self):
         if self.config.freeze_encoder:
             self.freeze_model()
-        add_temporal_attention(self.encoder)
         if self.config.add_lora:
             add_lora(self.encoder)
     
     def forward(self, x):
         '''
-        x: (b, t, f, h, w, c)
+        x: (b, t, c, h, w)
         x.shape:
             b=batch size, 
-            t=number of images/videos in a sample, 
-            f=number of frames in each image/video, 
+            t=number of frames in each image/video, 
             c=number of channels, h=height, w=width
         '''
-        b, t, f, h, w, c = x.shape 
-        x = rearrange(x, "b t f h w c -> (b t) f h w c")
-        x = rearrange(x, "bt f h w c -> bt f (h w) c")
-        embeddings = self.encoder(x) # B*T, N_E, E
-        embeddings = rearrange(embeddings, "(b t) v d -> b t v d", b=b, t=t, v=f)
+        b, t, c, h, w = x.shape 
+        embeddings = self.encoder(x) # B, N_E, E
         return embeddings
 
 
@@ -139,6 +79,7 @@ def get_vision_encoder(
             # qkv_bias=args.qkv_bias,
             # proj_bias=args.proj_bias,
             # ffn_bias=args.ffn_bias,
+            video_mode=args.video_mode,
         )
         model = vits.__dict__[name](**vit_kwargs)
         if pretrained:

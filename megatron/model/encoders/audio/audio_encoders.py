@@ -66,14 +66,12 @@ class CLAPWrapper(nn.Module):
         
     def forward(self, x):
         '''
-        x: (B, T, C, H, W)
+        x: (B, C, H, W)
         '''
 
-        b, t, c, h, w = x.shape
-        x = rearrange(x, "b t c h w -> (b t) c h w")
+        b, c, h, w = x.shape
         x = self.processor(x, return_tensors="pt")
         embeddings = self.encoder(x)
-        embeddings = rearrange(embeddings, "(b t) n e -> b t n e", b=b, t=t)
         return embeddings
 
 def get_audio_encoder(
