@@ -304,18 +304,19 @@ def init_weights_vit_timm(module: nn.Module, name: str = ""):
 
 
 def vit_small(patch_size=16, **kwargs):
-    if kwargs.video_mode:
-        model = DinoVideoWrapper(
-            patch_size=patch_size,
-            embed_dim=384,
-            depth=12,
-            num_heads=6,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
-    else:
-        model = DinoVisionTransformer(
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_small(patch_size=16, **kwargs):
+    model = DinoVideoWrapper(
             patch_size=patch_size,
             embed_dim=384,
             depth=12,
@@ -326,10 +327,20 @@ def vit_small(patch_size=16, **kwargs):
         )
     return model
 
-
 def vit_base(patch_size=16, **kwargs):
-    if kwargs.video_mode:
-        model = DinoVideoWrapper(
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_base(patch_size=16, **kwargs):
+    model = DinoVideoWrapper(
         patch_size=patch_size,
         embed_dim=768,
         depth=12,
@@ -338,22 +349,23 @@ def vit_base(patch_size=16, **kwargs):
         block_fn=partial(Block, attn_class=MemEffAttention),
         **kwargs,
         )
-    else:
-        model = DinoVisionTransformer(
-            patch_size=patch_size,
-            embed_dim=768,
-            depth=12,
-            num_heads=12,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
-    return model
+    return
 
 
 def vit_large(patch_size=16, **kwargs):
-    if kwargs.video_mode:
-        model = DinoVideoWrapper(
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_large(patch_size=16, **kwargs):
+    model = DinoVideoWrapper(
         patch_size=patch_size,
         embed_dim=1024,
         depth=24,
@@ -362,35 +374,25 @@ def vit_large(patch_size=16, **kwargs):
         block_fn=partial(Block, attn_class=MemEffAttention),
         **kwargs,
         )
-    else:
-        model = DinoVisionTransformer(
-            patch_size=patch_size,
-            embed_dim=1024,
-            depth=24,
-            num_heads=16,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
     return model
-
 
 def vit_giant2(patch_size=16, **kwargs):
     """
     Close to ViT-giant, with embed-dim 1536 and 24 heads => embed-dim per head 64
     """
-    if kwargs.video_mode:
-        model = DinoVideoWrapper(
-            patch_size=patch_size,
-            embed_dim=1536,
-            depth=40,
-            num_heads=24,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
-    else:
-        model = DinoVisionTransformer(
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=1536,
+        depth=40,
+        num_heads=24,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_giant2(patch_size=16, **kwargs):
+    model = DinoVideoWrapper(
             patch_size=patch_size,
             embed_dim=1536,
             depth=40,
@@ -520,6 +522,8 @@ class DinoVideoWrapper(DinoVisionTransformer):
             new_time_embed = T.interpolate(time_embed, size=(T), mode='nearest')
             new_time_embed = new_time_embed.transpose(1, 2)
             x = x + new_time_embed
+        else:
+            x = x + new_time_embed
     
         x = self.time_drop(x)
         
@@ -547,6 +551,7 @@ class DinoVideoWrapper(DinoVisionTransformer):
         x_prenorm = x
         x_prenorm = rearrange(x_prenorm, '(b t) n m -> b (t n) m',b=B,t=T)
         x_norm = self.norm(x)
+        x_norm = rearrange(x_norm, 'b (t n) m -> (b t) n m',b=B,t=T)
         cls_tokens = x_norm[:, 0, :].unsqueeze(1)
         cls_tokens = rearrange(cls_tokens, '(b t) n m -> b (t n) m',b=B,t=T)
         x_norm = x_norm[:, 1:, :]
