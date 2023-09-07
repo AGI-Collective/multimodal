@@ -22,7 +22,7 @@ class TemporalAttention(nn.Module):
 
         self._input_dim = input_dim
         self.temporal_attn = nn.MultiheadAttention(input_dim, num_heads=input_dim // 64)
-        self.norm = nn.LayerNorm(input_dim, eps=1e-12) #[TODO] 
+        self.norm = nn.LayerNorm(input_dim, eps=1e-12)
         self.linear = nn.Linear(input_dim, input_dim)
         self.droppath = DropPath(droppath_rate)
         self.scale = nn.parameter.Parameter(torch.zeros([]))
@@ -45,12 +45,23 @@ class TemporalAttention(nn.Module):
 
 class TemporalAdapter(nn.Module):
     def __init__(self, block):
-        self.temporal_attention = TemporalAttention()
+        super().__init__()
         self.block = block
+        self.temporal_attention = TemporalAttention()
     
     def forward(self, x):
         x = self.temporal_attention(x)
+        import pdb;pdb.set_trace()
         return self.block(x)
+
+
+def add_temporal_attention(model):
+        for child_name, child in model.named_children():
+            if isinstance(child, layers.Block):
+                new = TemporalAdapter(child)
+                setattr(model, child_name, new)
+            else:
+                add_temporal_attention(child)
 
 
 class DinoWrapper(nn.Module):
@@ -59,14 +70,6 @@ class DinoWrapper(nn.Module):
         self.encoder = encoder
         self.config = config
         self.prepare_encoder()
-        
-    def add_temporal_attention(self):
-        for child_name, child in self.encoder.named_children():
-            if isinstance(child, layers.Block):
-                new = TemporalAdapter(child)
-                setattr(self.encoder, child_name, new)
-            else:
-                self.add_temporal_attention(child)
     
     def freeze_model(self):
         num_layers_to_unfreeze = self.config.num_layers_to_unfreeze
@@ -82,16 +85,22 @@ class DinoWrapper(nn.Module):
     def prepare_encoder(self):
         if self.config.freeze_encoder:
             self.freeze_model()
-        self.add_temporal_attention()
+        add_temporal_attention(self.encoder)
         if self.config.add_lora:
             add_lora(self.encoder)
     
     def forward(self, x):
         '''
-        x: (b, t, f, c, h, w)
+        x: (b, t, f, h, w, c)
+        x.shape:
+            b=batch size, 
+            t=number of images/videos in a sample, 
+            f=number of frames in each image/video, 
+            c=number of channels, h=height, w=width
         '''
-        b, t, f, c, h, w = x.shape # b=batch size, t=number of images/videos in a sample, f=number of frames in each image/video, c=number of channels, h=height, w=width
-        x = rearrange(x, "b t f c h w -> (b t) f c h w")
+        b, t, f, h, w, c = x.shape 
+        x = rearrange(x, "b t f h w c -> (b t) f h w c")
+        x = rearrange(x, "bt f h w c -> bt f (h w) c")
         embeddings = self.encoder(x) # B*T, N_E, E
         embeddings = rearrange(embeddings, "(b t) v d -> b t v d", b=b, t=t, v=f)
         return embeddings

@@ -20,7 +20,7 @@ class Args:
 # Create an instance of the Args class
 args = Args()
 model=get_vision_encoder(args,"vit_large",True)
-images = torch.ones(5,3,224,224)
+images = torch.ones(5,1,1,3,224,224)
 # images = torch.ones(5,3,224,224)
 output = model(images)
 print(model)
