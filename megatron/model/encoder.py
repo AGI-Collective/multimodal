@@ -78,7 +78,17 @@ class Encoder(nn.Module):
 
         rearrange code based on https://github.com/dhansmair/flamingo-mini
         """
-        embeddings = self.encoder(x) # B, T, N_E, E
+        if self.modality == "vision":
+            B, T, F, C, H, W = x.shape
+            x = rearrange(x, "b t f c h w -> (b t) f c h w")
+        elif self.modality == "audio":
+            B, T, C, H, W = x.shape
+            x = rearrange(x, "b t c h w -> (b t) c h w")
+        else:
+            raise ValueError(f"modality {self.modality} not recognized")
+
+        embeddings = self.encoder(x) # (B, T), N_E, E
+        embeddings = rearrange(embeddings, "(b t) n_e e -> b t n_e e", b=B, t=T) # (B, T, N_E, E
         B, T, N_E, E = embeddings.shape
         assert N_E == self.encoder_seq_len
         
