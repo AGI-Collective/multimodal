@@ -302,108 +302,7 @@ def init_weights_vit_timm(module: nn.Module, name: str = ""):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
-
-def vit_small(patch_size=16, **kwargs):
-    model = DinoVisionTransformer(
-        patch_size=patch_size,
-        embed_dim=384,
-        depth=12,
-        num_heads=6,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-    )
-    return model
-
-def vit_vision_small(patch_size=16, **kwargs):
-    model = DinoVideoWrapper(
-            patch_size=patch_size,
-            embed_dim=384,
-            depth=12,
-            num_heads=6,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
-    return model
-
-def vit_base(patch_size=16, **kwargs):
-    model = DinoVisionTransformer(
-        patch_size=patch_size,
-        embed_dim=768,
-        depth=12,
-        num_heads=12,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-    )
-    return model
-
-def vit_vision_base(patch_size=16, **kwargs):
-    model = DinoVideoWrapper(
-        patch_size=patch_size,
-        embed_dim=768,
-        depth=12,
-        num_heads=12,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-        )
-    return
-
-
-def vit_large(patch_size=16, **kwargs):
-    model = DinoVisionTransformer(
-        patch_size=patch_size,
-        embed_dim=1024,
-        depth=24,
-        num_heads=16,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-    )
-    return model
-
-def vit_vision_large(patch_size=16, **kwargs):
-    model = DinoVideoWrapper(
-        patch_size=patch_size,
-        embed_dim=1024,
-        depth=24,
-        num_heads=16,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-        )
-    return model
-
-def vit_giant2(patch_size=16, **kwargs):
-    """
-    Close to ViT-giant, with embed-dim 1536 and 24 heads => embed-dim per head 64
-    """
-    model = DinoVisionTransformer(
-        patch_size=patch_size,
-        embed_dim=1536,
-        depth=40,
-        num_heads=24,
-        mlp_ratio=4,
-        block_fn=partial(Block, attn_class=MemEffAttention),
-        **kwargs,
-    )
-    return model
-
-def vit_vision_giant2(patch_size=16, **kwargs):
-    model = DinoVideoWrapper(
-            patch_size=patch_size,
-            embed_dim=1536,
-            depth=40,
-            num_heads=24,
-            mlp_ratio=4,
-            block_fn=partial(Block, attn_class=MemEffAttention),
-            **kwargs,
-        )
-    return model
-
-class DinoVideoWrapper(DinoVisionTransformer):
+class DinoVisionWrapper(DinoVisionTransformer):
     def __init__(self, img_size=224,
         patch_size=16,
         in_chans=3,
@@ -505,7 +404,7 @@ class DinoVideoWrapper(DinoVisionTransformer):
 
         '''
         if isinstance(x, list):
-            raise NotImplementedError("DinoVideoWrapper does not support list input")
+            raise NotImplementedError("DinoVisionWrapper does not support list input")
             # return self.forward_features_list(x, masks)
         
         B, T, C, _, _ = x.shape
@@ -563,3 +462,103 @@ class DinoVideoWrapper(DinoVisionTransformer):
             "x_prenorm": x_prenorm,
             "masks": masks,
         }
+
+def vit_small(patch_size=16, **kwargs):
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_small(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+            patch_size=patch_size,
+            embed_dim=384,
+            depth=12,
+            num_heads=6,
+            mlp_ratio=4,
+            block_fn=partial(Block, attn_class=MemEffAttention),
+            **kwargs,
+        )
+    return model
+
+def vit_base(patch_size=16, **kwargs):
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_base(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+        patch_size=patch_size,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+        )
+    return
+
+
+def vit_large(patch_size=16, **kwargs):
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_large(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+        patch_size=patch_size,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+        )
+    return model
+
+def vit_giant2(patch_size=16, **kwargs):
+    """
+    Close to ViT-giant, with embed-dim 1536 and 24 heads => embed-dim per head 64
+    """
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=1536,
+        depth=40,
+        num_heads=24,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+    )
+    return model
+
+def vit_vision_giant2(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+            patch_size=patch_size,
+            embed_dim=1536,
+            depth=40,
+            num_heads=24,
+            mlp_ratio=4,
+            block_fn=partial(Block, attn_class=MemEffAttention),
+            **kwargs,
+        )
+    return model
