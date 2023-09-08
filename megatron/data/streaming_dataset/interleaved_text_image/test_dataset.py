@@ -67,13 +67,15 @@ def potato():
                 if current_length + len(text) > max_length:#Too long, that's fine for text, just grab what we can
                     current_length = max_length
                     text = text[:current_length + len(text) - max_length]#Changes the actual list in the thing
+                    #We do NOT pop an image here because we haven't finished the current text
+                    #We also naturally do not pop text.
                     
                 else:#Not greater, remove entire text and entire image
                     text = text_buffer.pop(0)
                     image_buffer.pop(0)#Just remove the None for image
-                
-                current_length += len(text)
-                curr_text.extend(text)#Either way, we extend current text with the new stuff
+                    current_length += len(text)
+                    
+                curr_text.extend(text)
                 curr_image.append(None)
                 
             #TODO what do we do if we exactly are in range to fit an image, but not the image EOS?
@@ -83,6 +85,8 @@ def potato():
                         current_length += 1
                         curr_text.append(-111)#padding token
                         curr_image.append(None)
+                        #We don't pop anything here
+                        
                 else:#So this includes that EOS case...
                     curr_image.append(image_buffer.pop(0))
                     curr_text.append(text_buffer.pop(0))
