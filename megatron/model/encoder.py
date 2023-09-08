@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchtyping import TensorType
 from einops import rearrange
-from perceiver import PerceiverResampler
+from .perceiver import PerceiverResampler
 from .encoders.audio_encoders import get_audio_encoder
 from .encoders.vision_encoders import get_vision_encoder
 
@@ -19,8 +19,8 @@ ENCODER_SEQ_LENS = {
     "dinov2_small": 257,
 }
 
-# Vision encoder 
-class Encoder(nn.Module):
+# MultModal Encoder for Vision and Audio 
+class MultiModalEncoder(nn.Module):
 
     """
     Takes in a batch of visions and returns a batch of embeddings of the
