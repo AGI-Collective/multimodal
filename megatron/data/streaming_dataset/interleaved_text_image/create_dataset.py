@@ -25,6 +25,7 @@ from transformers import PreTrainedTokenizerBase
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+from hamcrest.core.core.isnone import none
 
 
 class NoConcatDataset(IterableDataset):
@@ -118,15 +119,91 @@ class ConcatTokensDataset(IterableDataset):
 
     def __iter__(self) -> Iterable[Dict[str, bytes]]:
 
-        buffer = []
+        image_buffer = []
+        text_buffer = []
+        total_buffer = 0
+        
         for sample in self.hf_dataset:
-            encoded = self.tokenizer(sample['text'],
-                                     truncation=False,
-                                     padding=False)
-            iids = encoded['input_ids']
-            buffer = buffer + self.bos_tokens + iids + self.eos_tokens
-            # Create a np array of random images (B, H, W, C) and convert to bytes and store in sample['images']
-            images = np.random.randint(0, 255, size=(10, 224, 224, 3))
+            
+            
+                    
+            text = sample["text"]#We have to assume it's continuous for now.
+            text = sample["text"].split("IMAGEHERE")
+            images = sample["images"]
+            
+            text_buffer.append(self.bos_tokens)
+            
+            for section in text:
+                #Need to check this for max length however
+                text_buffer.append(self.tokenizer(section, truncation=False,padding=False))
+            
+            #Need to add all images to the image_buffer
+            image_buffer.append(images)
+            image_buffer.append(self.eos_tokens)
+            
+            print(text_buffer)
+            print(image_buffer)
+                
+            
+            #This is 100% chance wrong, because it doesn't remove the None.
+            total_buffer = total_buffer + length_text(text_ids) + 64*len(images.shape[0]) 
+            
+            
+            #zipped list is same length as total length
+            zipped_list = []
+            
+            image_index = 0 
+            text_index = 0
+            
+            while True:
+                #Add text until we hit none, then add images.
+                #Repeat until we have processed both lists
+                if text_index < len(sample["text"]) and sample["text"][text_index] != None:
+                    zipped_list.append(0)
+                    text_index += 1
+                elif image_index < len(images):
+                    zipped_list.append(1)
+                    image_index += 1
+                else:
+                    break
+                    
+            #We want to make sure we yield samples that are either max length, or padded to max_length
+            
+            if len(total_buffer) > self.max_length:
+                #Need to remove samples from the end.
+                #If we are doing wrapping, add them back to the buffer.
+                #If not, just toss them.
+                #If the last thing we needed to remove was an image, just pad until the end.
+                
+                #How do we tell if the last things added were image or text though?
+                #Maybe we should keep a zipped list?
+                pass
+            
+            elif len(total_buffer) == self.max_length:
+                
+                #yield sample, then clear buffers.
+                labels = text_buffer, image_buffer#Incomplete, we need to combine the things somehow...?
+                
+                
+                multimodal_position_ids = []
+                
+                yield {
+                    # convert to bytes to store in MDS binary format
+                    'tokens': text_buffer,
+                    'images': image_buffer,
+                    'multimodal_position_ids': multimodal_position_ids,
+                    'labels': labels,
+                }
+                image_buffer.clear()
+                text_buffer.clear()
+                
+            else:
+                #We are under, do nothing, go to next
+                continue
+            #Second continue is because the code below this is old
+            continue
+                
+            
             while len(buffer) >= self.max_length:
                 concat_sample = buffer[:self.max_length]
                 buffer = buffer[self.max_length:] if self.should_wrap else []
