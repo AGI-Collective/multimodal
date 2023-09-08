@@ -71,7 +71,8 @@ def potato():
                 else:#Not greater, remove entire text and entire image
                     text = text_buffer.pop(0)
                     image_buffer.pop(0)#Just remove the None for image
-                    
+                
+                current_length += len(text)
                 curr_text.extend(text)#Either way, we extend current text with the new stuff
                 curr_image.append(None)
                 
@@ -85,10 +86,18 @@ def potato():
                 else:#So this includes that EOS case...
                     curr_image.append(image_buffer.pop(0))
                     curr_text.append(text_buffer.pop(0))
+                    current_length +=65
             else:
                 print("No clue")
                 exit()
-        
+            
+            if current_length == max_length:
+                #TODO needs to do multimodal positioning and some other stuff
+                pass
+                
+            elif current_length > max_length:
+                print("went over length somehow, check code again")
+                exit()
         exit()
         
         
