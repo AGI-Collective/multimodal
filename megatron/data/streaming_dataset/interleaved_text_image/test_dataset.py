@@ -1,12 +1,12 @@
 from transformers import GPT2Tokenizer
-from sympy.physics.units.definitions.dimension_definitions import current
-
+import numpy
+import torch
 tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
 bos_tokens = -3
 eos_tokens = 1000000000
 
-max_length = 77
+max_length = 90
 data = {}
 
 
@@ -20,6 +20,10 @@ text_buffer = []
 total_buffer = 0
 
 def potato():
+    
+    current_length = 0
+    curr_text = []
+    curr_image = []
     
     for sample in data:
         text = sample["text"]
@@ -44,9 +48,7 @@ def potato():
         
         #We want to add text and image to our upcoming output (setup), and remove them from the buffer.
         
-        current_length = 0
-        curr_text = []
-        curr_image = []
+        
         while True:
             
             print("Current lists", curr_text, curr_image)
@@ -97,23 +99,38 @@ def potato():
                 exit()
             
             if current_length == max_length:
-                #TODO needs to do multimodal positioning and some other stuff
-                pass
+                
+                np_text = numpy.array(curr_text)
+                np_image = numpy.array(curr_image)
+                
+                
+                text_id = torch.from_numpy(numpy.where(np_text != None)[0])
+                image_id = torch.from_numpy(numpy.where(np_image!= None)[0])
+
+                text_image_ids = torch.nn.utils.rnn.pad_sequence([text_id, image_id], batch_first = True, padding_value = -1)
+                
+                print(text_images)
+                exit()
+                
+                #Remove nones, which requires iterating over them again.
+                
+                curr_text = list(filter(lambda a: a != None, curr_text))
+                curr_image = list(filter(lambda a: a != None, curr_image))
+                #TODO optimize that
+                
+                #yield is commented out because it doesn't print for me otherwise
+                yield {
+                        'images': curr_image,
+                        'text': curr_text,
+                        'ids' : text_image_ids,
+                        'labels': None#Unsure what these are meant to be from here...
+                        }
+                curr_image.clear()
+                curr_text.clear()
+                current_length = 0
                 
             elif current_length > max_length:
                 print("went over length somehow, check code again")
-                exit()
-        exit()
-        
-        
-        
-        return {
-                    # convert to bytes to store in MDS binary format
-                    'tokens': text_buffer,
-                    'images': image_buffer,
-                    'multimodal_position_ids': multimodal_position_ids,
-                    'labels': labels,
-                }
-            
+                exit()            
 
 potato()
