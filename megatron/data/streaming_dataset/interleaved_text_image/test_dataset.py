@@ -63,34 +63,35 @@ def potato():
                 print("Uhoh, double NOT none")
                 exit()
             elif text != None and image == None:
-                
+                #Fix saving the missing/original part of the text
                 if current_length + len(text) > max_length:#Too long, that's fine for text, just grab what we can
                     current_length = max_length
-                    text = text[:current_length + len(text) - max_length]#Changes the actual list in the thing
+                    text_append = text[:current_length + len(text) - max_length]#Changes the actual list in the thing
+                    text[0] = text[current_length + len(text) - max_length:]
                     #We do NOT pop an image here because we haven't finished the current text
                     #We also naturally do not pop text.
                     
                 else:#Not greater, remove entire text and entire image
-                    text = text_buffer.pop(0)
+                    text_append = text_buffer.pop(0)
                     image_buffer.pop(0)#Just remove the None for image
-                    current_length += len(text)
+                    current_length += len(text_append)
                     
-                curr_text.extend(text)
+                curr_text.extend(text_append)
                 curr_image.append(None)
                 
             #TODO what do we do if we exactly are in range to fit an image, but not the image EOS?
             elif text == None and image != None:
-                if current_length + 65 > max_length:#Nothing we can do for text, just pad instead
-                    while current_length <= max_length:
-                        current_length += 1
-                        curr_text.append(-111)#padding token
-                        curr_image.append(None)
-                        #We don't pop anything here
+                #Number might be 67 instead.
+                #Should we even add on images?
+                if current_length + 66 + 10 > max_length:#Nothing we can do for text, just pad instead
+                    #We are just going to yield
+                    current_length = max_length
+                    
                         
                 else:#So this includes that EOS case...
                     curr_image.append(image_buffer.pop(0))
                     curr_text.append(text_buffer.pop(0))
-                    current_length +=65
+                    current_length += 66
             else:
                 print("No clue")
                 exit()
