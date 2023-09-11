@@ -115,6 +115,11 @@ class NeoXArgsModel(NeoXArgsTemplate):
     Maximum sequence length to process.
     """
 
+    vision_seq_length: int = None
+    """
+    Maximum sequence length to process for vision.
+    """
+
     max_position_embeddings: int = None
     """
     Maximum number of position embeddings to use. This is the size of position embedding.
@@ -676,6 +681,11 @@ class NeoXArgsOther(NeoXArgsTemplate):
     Include sequence id as attention bias.
     """
 
+    concat_data: bool = True
+    """
+    Concatenate sequences for training.
+    """
+
 
 @dataclass
 class NeoXArgsTokenizer(NeoXArgsTemplate):
@@ -734,14 +744,29 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     List of paths to label datasets (not shifted by 1 yet!).
     """
 
+    train_streaming_data_config: dict = None
+    """
+    Dictionary configuring streaming training dataset.
+    """
+
     test_data_paths: list = None
     """
     List of paths to test datasets.
     """
 
+    test_streaming_data_config: dict = None
+    """
+    Dictionary configuring streaming test dataset.
+    """
+
     valid_data_paths: list = None
     """
     List of paths to validation datasets.
+    """
+
+    valid_streaming_data_config: dict = None
+    """
+    Dictionary configuring streaming validation dataset.
     """
 
     train_data_weights: list = None
