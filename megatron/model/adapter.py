@@ -21,29 +21,29 @@ class Adapter(nn.Module):
             self.layer_norm = False
         
         if not is_lora:
-            self.input = nn.Linear(dim, dim // downsample_factor)
+            self.input_lora = nn.Linear(dim, dim // downsample_factor)
             self.activation = activation()
-            self.output = nn.Linear(dim // downsample_factor, dim)
+            self.output_lora = nn.Linear(dim // downsample_factor, dim)
         else:
-            self.input = nn.Linear(dim, rank)
+            self.input_lora = nn.Linear(dim, rank)
             self.activation = None
-            self.output = nn.Linear(rank, dim)
+            self.output_lora = nn.Linear(rank, dim)
         
         
         self.init_weights()
 
     def init_weights(self, std=1e-3):
         
-        torch.nn.init.normal_(self.input.weight, std=std)
-        torch.nn.init.normal_(self.input.bias, std=std)
-        self.input.weight.data = torch.clamp(self.input.weight.data, min=-2 * std, max=2 * std)
-        self.input.bias.data = torch.clamp(self.input.bias.data, min=-2 * std, max=2 * std)
+        torch.nn.init.normal_(self.input_lora.weight, std=std)
+        torch.nn.init.normal_(self.input_lora.bias, std=std)
+        self.input_lora.weight.data = torch.clamp(self.input_lora.weight.data, min=-2 * std, max=2 * std)
+        self.input_lora.bias.data = torch.clamp(self.input_lora.bias.data, min=-2 * std, max=2 * std)
         
         #We are not setting output to zero - usually you would with adapters, but we are doing domain adaptation so it doesn't matter.
-        torch.nn.init.normal_(self.output.weight, std=std)
-        torch.nn.init.normal_(self.output.bias, std=std)
-        self.output.weight.data = torch.clamp(self.output.weight.data, min=-2 * std, max=2 * std)
-        self.output.bias.data = torch.clamp(self.output.bias.data, min=-2 * std, max=2 * std)
+        torch.nn.init.normal_(self.output_lora.weight, std=std)
+        torch.nn.init.normal_(self.output_lora.bias, std=std)
+        self.output.weight.data = torch.clamp(self.output_lora.weight.data, min=-2 * std, max=2 * std)
+        self.output.bias.data = torch.clamp(self.output_lora.bias.data, min=-2 * std, max=2 * std)
         
         if self.layer_norm != False:
             self.layer_norm.bias.data.zero_()
@@ -54,12 +54,12 @@ class Adapter(nn.Module):
         if self.layer_norm != False:
             x = self.layer_norm(x)
         
-        x = self.input(x)
+        x = self.input_lora(x)
         
         if self.activation != None:
             x = self.activation(x)
             
-        x = self.output(x)
+        x = self.output_lora(x)
         return x
         
     def forward(self, x: TensorType["b", "s", "d"]) -> TensorType["b", "s", "d"]:
