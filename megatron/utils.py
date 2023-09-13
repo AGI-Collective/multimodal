@@ -39,6 +39,11 @@ from megatron import mpu
 
 from collections import deque
 
+MODALITY_DICT = {
+    "text":0, 
+    "vision":1,
+    "audio":2
+}
 
 def reduce_losses(losses):
     """Reduce a tensor of losses across all GPUs."""
@@ -75,27 +80,10 @@ def get_attn_mask(seq_length, device):
     # convert to binary
     return mask < 0.5
 
-def get_multimodal_attn_mask(seq_length, multimodal_position_ids, sequence_id, attn_uses_sequence_id, device):
-    """
-    Get triangular attention mask for a given sequence length / device.
-    """
-    # lower triangular attention mask
-    mask = torch.tril(torch.ones((1, seq_length, seq_length), device=device)).view(
-        1, 1, seq_length, seq_length
-    )
-
-    # convert to binary
-    return mask < 0.5
-
-
 def get_ltor_masks_and_position_ids(
     data,
-    multimodal_position_ids,
     eod_token,
     eod_mask_loss=False,
-    sequence_id=None,
-    attn_uses_sequence_id=False,
-    pad_token=None,
 ):
     """Build masks and position id for left to right model."""
 
@@ -103,11 +91,8 @@ def get_ltor_masks_and_position_ids(
     batch_size, seq_length = data.size()
 
     # Attention mask (lower triangular).
-    attention_mask = get_multimodal_attn_mask(
+    attention_mask = get_attn_mask(
         seq_length=seq_length,
-        multimodal_position_ids=multimodal_position_ids,
-        sequence_id=sequence_id,
-        attn_uses_sequence_id=attn_uses_sequence_id,
         device=data.device,
     )
 
@@ -115,17 +100,171 @@ def get_ltor_masks_and_position_ids(
     loss_mask = torch.ones(data.size(), dtype=torch.float, device=data.device)
     if eod_mask_loss:
         loss_mask[data == eod_token] = 0.0
-    if pad_token is not None:
-        loss_mask[data == pad_token] = 0.0
-    
-    # Apply loss mask for all the multimodal input tokens  # TODO
 
-    # Position ids. # TODO
+    # Position ids.
     position_ids = torch.arange(seq_length, dtype=torch.long, device=data.device)
     position_ids = position_ids.unsqueeze(0).expand_as(data)
 
     return attention_mask, loss_mask, position_ids
 
+
+def get_sequence_ids(tokens, eos_token_id, bos_token_id):
+    if (eos_token_id is None) and (bos_token_id is None):
+        raise ValueError(
+            'Must supply a value for either eos_token_id or bos_token_id, but got None for both.'
+        )
+    if (eos_token_id is not None) and (bos_token_id is not None):
+        raise ValueError(
+            'Cannot use *both* EOS and BOS tokens for detecting sequence boundaries. ' +\
+            'Please supply `eos_token_id` if sequences end with an EOS token, or use ' +\
+            '`bos_token_id` if sequences start with a BOS token.'
+        )
+    
+    split_token_id = eos_token_id
+    bos_mode = False
+    if eos_token_id is None:
+        split_token_id = bos_token_id
+        bos_mode = True
+
+    is_separator = torch.eq(tokens,
+                            self.split_token_id)  # type: ignore
+    cumulative_sep = torch.cumsum(is_separator,
+                                    dim=1).to(tokens.dtype)
+    # If separator token is bos, we're already done
+    if bos_mode:
+        return cumulative_sep
+
+    # If separator token is eos, right shift 1 space
+    left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
+    return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
+    
+def get_shifted_multimodal_position_ids(multimodal_position_ids, vision_seq_length):
+    
+    pass
+
+def get_proxy_tokens(position_ids, seq_length, start_ind=100):
+    positive_mask = position_ids > 0
+    proxy_tokens = -1*torch.arange(start_ind, start_ind + positive_mask.shape[1]).expand_as(positive_mask) # All vision tokens are given a negative index
+    proxy_tokens = torch.repeat_interleave(proxy_tokens, seq_length, dim=1)
+    positive_mask = torch.repeat_interleave(positive_mask, seq_length, dim=1)
+    proxy_masked_tokens = proxy_tokens*positive_mask
+    proxy_masked_tokens[proxy_masked_tokens == 0] = -1
+    return proxy_masked_tokens
+
+def get_multimodal_mask(interleaved_tokens):
+    interleaved_mask = interleaved_tokens < 0
+    interleaved_multimodal_tokens = interleaved_tokens*interleaved_mask
+
+    interleaved_multimodal_tokens_3d_1 = interleaved_multimodal_tokens.unsqueeze(-1)
+    interleaved_multimodal_tokens_3d_2 = interleaved_multimodal_tokens.unsqueeze(1)
+
+    multimodal_mask = torch.eq(interleaved_multimodal_tokens_3d_1, interleaved_multimodal_tokens_3d_2) & (interleaved_multimodal_tokens_3d_1 < 0)
+    return multimodal_mask
+
+def get_multimodal_attn_mask(
+        text_tokens, 
+        labels,
+        multimodal_position_ids,
+        shifted_multimodal_position_ids, 
+        input_seq_length,
+        vision_seq_length, 
+        eos_token_id,
+        bos_token_id,
+        concat_data, 
+        attn_uses_sequence_id, 
+        device
+    ):
+    """
+    Get multimodal attention mask
+    """
+    batch_size = multimodal_position_ids.shape[0]
+    # lower triangular attention mask across all tokens
+    mask = torch.tril(torch.ones((1, input_seq_length, input_seq_length), device=device)).expand((batch_size, -1, -1))
+
+    # Form vision proxy tokens using shifted multimodal position ids
+    vision_indices = multimodal_position_ids[:, MODALITY_DICT['vision'], :].copy()
+    proxy_vision_tokens = get_proxy_tokens(vision_indices, vision_seq_length)
+    # Do the same process for Audio #TODO
+
+    # Concatenate vision proxy tokens with text tokens 
+    concat_tokens = torch.cat((text_tokens, proxy_vision_tokens), dim=1)
+
+    # Rearrrange tokens in interleaved format using shifted multimodal position ids
+    # Equvivalent to : interleaved_tokens = torch.gather(concat_tokens, 1, shifted_multimodal_position_ids)
+    
+    # Use advanced indexing
+    batch_indices = torch.arange(concat_tokens.size(0))[:, None] 
+    interleaved_tokens = concat_tokens[batch_indices, shifted_multimodal_position_ids]
+
+    
+    # assert that all tokens after input_seq_length are -1s (padding)
+    assert torch.all(interleaved_tokens[:, input_seq_length:] == -1)
+    interleaved_tokens = interleaved_tokens[:, :input_seq_length]
+
+    # No masking across vision tokens 
+    vision_mask = get_multimodal_mask(interleaved_tokens)
+    mask = mask+vision_mask
+    mask = torch.clip(mask, 0, 1)
+
+    # if attn_uses_sequence_id, then mask across sequence ids to prevent cross sequence attention
+    if concat_data:
+        sequence_ids = get_sequence_ids(interleaved_tokens, eos_token_id, bos_token_id)
+        if attn_uses_sequence_id:
+            sequence_ids_3d_1 = sequence_ids.unsqueeze(-1)
+            sequence_ids_3d_2 = sequence_ids.unsqueeze(1)
+            matching_sequence_ids = torch.eq(sequence_ids_3d_1, sequence_ids_3d_2)
+            mask = mask * matching_sequence_ids
+    
+    # convert to binary
+    mask = mask.view(
+        1, 1, input_seq_length, input_seq_length
+    )
+    return mask < 0.5 # TODO Why?
+
+
+def get_multimodal_ltor_masks_and_position_ids(
+    text_tokens,
+    labels,
+    multimodal_position_ids,
+    input_seq_length,
+    vision_seq_length,
+    eod_token,
+    bos_token,
+    concat_data=True,
+    attn_uses_sequence_id=False,
+    pad_token=None,
+):
+    """Build masks and position id for left to right model."""
+
+    # Extract batch size and sequence length.
+    batch_size = multimodal_position_ids.shape[0]
+    label_length = labels.shape[1]
+
+    shifted_multimodal_position_ids = get_shifted_multimodal_position_ids(multimodal_position_ids, vision_seq_length)
+
+    # Attention mask (lower triangular).
+    attention_mask = get_multimodal_attn_mask(
+        text_tokens=text_tokens,
+        input_seq_length=input_seq_length,
+        vision_seq_length=vision_seq_length,
+        multimodal_position_ids=multimodal_position_ids,
+        shifted_multimodal_position_ids=shifted_multimodal_position_ids,
+        eos_token=eod_token,
+        bos_token=bos_token,
+        concat_data=concat_data,
+        attn_uses_sequence_id=attn_uses_sequence_id,
+        device=labels.device,
+    )
+
+    # Loss mask.
+    loss_mask = torch.ones((batch_size, label_length), dtype=torch.float, device=labels.device)
+    
+    if pad_token is not None:
+        loss_mask[labels == pad_token] = 0.0
+
+    position_ids = torch.arange(input_seq_length, dtype=torch.long, device=labels.device)
+    position_ids = position_ids.unsqueeze(0).expand(batch_size, input_seq_length)
+    return attention_mask, loss_mask, position_ids, shifted_multimodal_position_ids
 
 def local_rank():
     """Local rank of process"""
