@@ -42,8 +42,8 @@ class Adapter(nn.Module):
         #We are not setting output to zero - usually you would with adapters, but we are doing domain adaptation so it doesn't matter.
         torch.nn.init.normal_(self.output_lora.weight, std=std)
         torch.nn.init.normal_(self.output_lora.bias, std=std)
-        self.output.weight.data = torch.clamp(self.output_lora.weight.data, min=-2 * std, max=2 * std)
-        self.output.bias.data = torch.clamp(self.output_lora.bias.data, min=-2 * std, max=2 * std)
+        self.output_lora.weight.data = torch.clamp(self.output_lora.weight.data, min=-2 * std, max=2 * std)
+        self.output_lora.bias.data = torch.clamp(self.output_lora.bias.data, min=-2 * std, max=2 * std)
         
         if self.layer_norm != False:
             self.layer_norm.bias.data.zero_()
@@ -171,7 +171,7 @@ class ParallelLinearPEFT(torch.nn.Module):
         
         result, bias = self.par_lin.forward(x)
         
-        result += x @ self.downsample_adapter_lora.T @ self.upsample_adapter_lora.T * self.scaling
+        result = result + x @ self.downsample_adapter_lora.T @ self.upsample_adapter_lora.T * self.scaling
         
         return result, bias
 
@@ -224,8 +224,8 @@ def recursive_replace(model):
             if "adapter_lora" in child_name:
                 return
             print("found linear", child_name)
-            lin = Adapter(dim = child.out_features, is_lora = True)#We just assume it's same input and output
-            setattr(model, child_name, lin)#We can access the 0 because linear has no childre
+            peft = ParallelLinearPEFT(child, is_lora = True)
+            setattr(model, child_name, peft)
             
         if "ColumnParallel" in str(type(child)) or "RowParallel" in str(type(child)):
             print("found row/col")
