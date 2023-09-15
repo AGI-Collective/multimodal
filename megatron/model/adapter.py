@@ -171,7 +171,7 @@ class ParallelLinearPEFT(torch.nn.Module):
         
         result, bias = self.par_lin.forward(x)
         
-        result += x @ self.downsample_adapter_lora.T @ self.upsample_adapter_lora.T * self.scaling
+        result = result + x @ self.downsample_adapter_lora.T @ self.upsample_adapter_lora.T * self.scaling
         
         return result, bias
 
@@ -190,7 +190,7 @@ def add_adapters(
           continue # no adapter for image_prefix transformers
         temp_names = [name for name,module in module.named_modules()]
         #Adapters aren't placed at the leaf node level, but one above it
-        if False:#location in temp_names and location==ff_attr:
+        if False:# location in temp_names and location==ff_attr:
             mlp = getattr(module,ff_attr)
             adapter_layer = AdapterWrapper(
                         attn_block=mlp,
