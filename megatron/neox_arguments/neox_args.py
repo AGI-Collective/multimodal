@@ -676,7 +676,7 @@ class NeoXArgsOther(NeoXArgsTemplate):
     Concatenate the data files for training.
     """
 
-    attn_uses_sequence_id: bool = False
+    attn_uses_sequence_id: bool = True
     """
     Include sequence id as attention bias.
     """

@@ -185,9 +185,14 @@ class ImageEncoder(torch.nn.Module):
 
 
     def forward(self, images):
+        # images is [B, T, F, C, H, W]
+        num_images = images.shape[1]
+        original_batch_size = images.shape[0]
+        images = rearrange(images, "b t f c h w -> (b t) f c h w")
+
         batch_size = images.shape[0]
-        max_seq_len = images.shape[1]
-        # images = images.reshape(batch_size, max_seq_len, -1)
+        max_seq_length = images.shape[1]
+        # images = images.reshape(batch_size, max_seq_length, -1)
         # print("Shape of images", images.shape)
 
         # images = images.reshape((images.shape[0] * images.shape[1], images.shape[2], images.shape[3], images.shape[4]))
@@ -203,7 +208,8 @@ class ImageEncoder(torch.nn.Module):
         # images = images.reshape()
         output = output[:, 0, :]
         embeddings = self.encoder_layer(output)
-        embeddings = embeddings.reshape(batch_size, max_seq_len, -1)  
+        embeddings = embeddings.reshape(batch_size, max_seq_length, -1)  
+        embeddings = rearrange(embeddings, "(b t) n f -> b t n f", b=original_batch_size, t=num_images)
         return embeddings
 
 class EmbeddingPipe(Embedding):
@@ -222,18 +228,18 @@ class EmbeddingPipe(Embedding):
     def forward(self, args):
         assert (
             len(args) == 5
-        ), f"Expected 3 arguments (input_ids, images, multimodal_position_ids, position_ids, attention_mask), but got {len(args)}."
+        ), f"Expected 3 arguments (input_ids, vision_input, multimodal_position_ids, position_ids, attention_mask), but got {len(args)}."
 
         input_ids = args[0]
-        images = args[1]
+        vision_input = args[1]
         multimodal_position_ids = args[2] # [B, T]
-        assert self.seq_length == torch.max(multimodal_position_ids)
+        assert self.seq_length == torch.max(multimodal_position_ids)+1
         position_ids = args[3]
         attention_mask = args[4]
         
         word_embeddings = super().forward(input_ids, position_ids) # [B, T, E]
-        
-        image_embeddings = self.image_encoder(images) # [B, T, N, E] where N=1 for now 
+        # Vision Input is [B, T, F, C, H, W]
+        image_embeddings = self.image_encoder(vision_input) # [B, T, N, E] where N=1 for now 
         image_embeddings = rearrange(image_embeddings, "b t n e -> b (t n) e") # [B, T*N, E]
         
         # Concatenate the embeddings
@@ -247,8 +253,9 @@ class EmbeddingPipe(Embedding):
         time_steps = all_embeddings.shape[1]
         batch_indices = torch.arange(batch_size).view(-1, 1).expand(-1, time_steps)
         all_embeddings = all_embeddings[batch_indices, multimodal_position_ids]
-        
-        assert all(multimodal_position_ids[batch_indices, multimodal_position_ids][:, self.seq_length:, :]) == -1, "Multimodal position ids should be -1 after the sequence length"
+        # print(multimodal_position_ids[batch_indices, multimodal_position_ids].shape, multimodal_position_ids[batch_indices, multimodal_position_ids])
+        if multimodal_position_ids.shape[1] > self.seq_length:
+            assert all(multimodal_position_ids[batch_indices, multimodal_position_ids][:, self.seq_length:]) == -1, "Multimodal position ids should be -1 after the sequence length"
         return all_embeddings, attention_mask
 
 

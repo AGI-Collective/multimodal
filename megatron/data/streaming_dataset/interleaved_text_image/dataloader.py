@@ -47,7 +47,7 @@ class StreamingInterleavedDataset(StreamingDataset):
     Args:
         tokenizer (Tokenizer): HuggingFace tokenizer to
             tokenize samples.
-        max_seq_len (int): The max sequence length of each sample.
+        max_seq_length (int): The max sequence length of each sample.
         streams (Sequence[Stream], optional): One or more Streams to stream/cache samples from,
             which may be upsampled or downsampled. StreamingDataset uses either ``streams`` or
             ``remote``/``local``. Defaults to ``None``.
@@ -93,7 +93,7 @@ class StreamingInterleavedDataset(StreamingDataset):
 
     def __init__(self,
                  tokenizer: PreTrainedTokenizerBase,
-                 max_seq_len: int,
+                 max_seq_length: int,
                  streams: Optional[Sequence[Stream]] = None,
                  remote: Optional[str] = None,
                  local: Optional[str] = None,
@@ -156,7 +156,7 @@ class StreamingInterleavedDataset(StreamingDataset):
             shuffle_block_size=shuffle_block_size,
         )
         self.tokenizer = tokenizer
-        self.max_seq_len = max_seq_len
+        self.max_seq_length = max_seq_length
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample: Mapping):
@@ -168,12 +168,12 @@ class StreamingInterleavedDataset(StreamingDataset):
         return self.tokenizer(text_sample['text'],
                               truncation=True,
                               padding='max_length',
-                              max_length=self.max_seq_len)
+                              max_length=self.max_seq_length)
 
     def _read_binary_tokenized_sample(self, sample: Dict[str, Any]):
         return torch.from_numpy(
             np.frombuffer(sample['tokens'],
-                          dtype=np.int64)[:self.max_seq_len].copy())
+                          dtype=np.int64)[:self.max_seq_length].copy())
     
     def _read_binary_data(self, sample):
         return torch.from_numpy(
@@ -191,93 +191,32 @@ class StreamingInterleavedDataset(StreamingDataset):
             raise RuntimeError(
                 'StreamingTextDataset needs samples to have a `text` or `tokens` column'
             )
-        images = self._read_binary_data(sample.get('images', None))
+        vision_input = torch.from_numpy(sample.get('vision_input', None).copy())
         multimodal_position_ids = torch.from_numpy(sample.get('multimodal_position_ids', None).copy())
-        # return {
-        #     'input_ids': token_sample,
-        #     'image': sample['image'],
-        #     'position_ids': sample['position_ids'],
-        # }
-
-        return (token_sample, images, multimodal_position_ids)
+        labels = torch.from_numpy(sample.get('labels', None).copy()) 
+        return (token_sample, vision_input, multimodal_position_ids, labels)
 
 
 # Multimodal Collate Function
 class MultimodalCollateWrapper:
-    def __init__(self, text_collator, image_collator, video_collator, audio_collator, multimodal_position_ids_collator) -> None:
+    def __init__(self, text_collator, vision_collator, video_collator, audio_collator, multimodal_position_ids_collator, label_collator) -> None:
         self.text_collator = text_collator
-        self.image_collator = image_collator
+        self.vision_collator = vision_collator
         # self.video_collator = video_collator
         # self.audio_collator = audio_collator
         self.multimodal_position_ids_collator = multimodal_position_ids_collator
+        self.label_collator = label_collator
     
     def __call__(self, examples: List[Any]) -> Dict[str, torch.Tensor]:
         # Convert examples (list of tuples) to a list of lists (one list per modality)
         examples = list(zip(*examples))
         batch = self.text_collator(examples[0])
-        batch['images'] = self.image_collator(examples[1])
+        batch['vision_input'] = self.vision_collator(examples[1])
         # batch['video'] = self.video_collator(examples[2])
         # batch['audio'] = self.audio_collator(examples[3])
         batch['multimodal_position_ids'] = self.multimodal_position_ids_collator(examples[2])
+        batch['labels'] = self.label_collator(examples[3])
         return batch
-
-
-class ConcatenatedSequenceCollatorWrapper:
-    """Collator wrapper to add sequence_id to batch."""
-
-    def __init__(
-        self,
-        base_collator: Callable,
-        eos_token_id: Optional[int] = None,
-        bos_token_id: Optional[int] = None,
-    ):
-        self.base_collator = base_collator
-        if (eos_token_id is None) and (bos_token_id is None):
-            raise ValueError(
-                'Must supply a value for either eos_token_id or bos_token_id, but got None for both.'
-            )
-        if (eos_token_id is not None) and (bos_token_id is not None):
-            raise ValueError(
-                'Cannot use *both* EOS and BOS tokens for detecting sequence boundaries. ' +\
-                'Please supply `eos_token_id` if sequences end with an EOS token, or use ' +\
-                '`bos_token_id` if sequences start with a BOS token.'
-            )
-
-        self.split_token_id = eos_token_id
-        self.bos_mode = False
-        if eos_token_id is None:
-            self.split_token_id = bos_token_id
-            self.bos_mode = True
-
-    def __call__(self, examples: List[Any]) -> Dict[str, torch.Tensor]:
-        batch = self.base_collator(examples)
-        batch['sequence_id'] = self.get_sequence_id_from_batch(batch)
-        return batch
-
-    def get_sequence_id_from_batch(
-            self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        
-        multimodal_position_ids = batch['multimodal_position_ids'] # TODO
-        number_of_modalities = multimodal_position_ids.shape[0]
-        batch_size = multimodal_position_ids.shape[1]
-        max_seq_len = multimodal_position_ids.shape[2]
-        tokens = torch.zeros((batch_size, max_seq_len), dtype=torch.long, device=multimodal_position_ids.device)
-        token_ids = batch['input_ids']
-        
-        # tokens[multimodal_position_ids[:, 0, :]] = token_ids
-        tokens[torch.arange(tokens.size(0))[:,None], multimodal_position_ids[:, 0, :]] = token_ids
-        is_separator = torch.eq(tokens,
-                                self.split_token_id)  # type: ignore
-        cumulative_sep = torch.cumsum(is_separator,
-                                      dim=1).to(batch['input_ids'].dtype)
-        # If separator token is bos, we're already done
-        if self.bos_mode:
-            return cumulative_sep
-
-        # If separator token is eos, right shift 1 space
-        left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
-        return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
-
 
 class TextNeoXCollateWrapper:
 
@@ -286,7 +225,7 @@ class TextNeoXCollateWrapper:
     
     def __call__(self, examples: List[Any]) -> Dict[str, torch.Tensor]:
         batch = self.collator(examples)
-        batch['text'] = batch['input_ids']
+        batch['text_input'] = batch['input_ids'] # TODO Delete input_ids to save comm overhead and space
         return batch
 
 class PaddedCollateWrapper:
@@ -307,7 +246,7 @@ class PaddedCollateWrapper:
     
 def build_interleaved_dataloader(
     cfg: DictConfig,
-    tokenizer: PreTrainedTokenizerBase,
+    tokenizer,
     device_batch_size: int,
 ):
     assert cfg.name == 'text', f'Tried to build text dataloader with cfg.name={cfg.name}'
@@ -347,23 +286,19 @@ def build_interleaved_dataloader(
 
     text_collate_fn = TextNeoXCollateWrapper(text_collate_fn)
     
-    image_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (num_images, H, W, C)
+    vision_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (num_vision, H, W, C)
 
-    multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_len)
+    multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
     
+    label_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (num_modalities, max_seq_length)
+
     collate_fn = MultimodalCollateWrapper(text_collator=text_collate_fn, 
-                                          image_collator=image_collate_fn, 
+                                          vision_collator=vision_collate_fn, 
                                           video_collator=None, 
                                           audio_collator=None, 
-                                          multimodal_position_ids_collator=multimodal_position_ids_collate_fn)
-
-    if (eos_token_id is not None) or (bos_token_id is not None):
-        # Note: Will raise an error if both are non-None
-        collate_fn = ConcatenatedSequenceCollatorWrapper(
-            base_collator=collate_fn,
-            eos_token_id=eos_token_id,
-            bos_token_id=bos_token_id)
-
+                                          multimodal_position_ids_collator=multimodal_position_ids_collate_fn, 
+                                          label_collator=label_collate_fn)
+    
     return DataLoader(
         dataset,
         collate_fn=collate_fn,
@@ -399,7 +334,7 @@ if __name__ == '__main__':
                         type=str,
                         default='val',
                         help='which split of the dataset to use')
-    parser.add_argument('--max_seq_len',
+    parser.add_argument('--max_seq_length',
                         type=int,
                         default=32,
                         help='max sequence length to test')
@@ -420,7 +355,7 @@ if __name__ == '__main__':
             'remote': args.remote_path,
             'split': args.split,
             'shuffle': False,
-            'max_seq_len': args.max_seq_len,
+            'max_seq_length': args.max_seq_length,
             'keep_zip': True,  # in case we need compressed files after testing
         },
         'drop_last': False,
@@ -430,11 +365,11 @@ if __name__ == '__main__':
     device_batch_size = 2
 
     tokenizer_cfg = {'name': args.tokenizer, 'kwargs': {}}
-    tokenizer_cfg['kwargs'] = {'model_max_length': args.max_seq_len}
+    tokenizer_cfg['kwargs'] = {'model_max_length': args.max_seq_length}
     tokenizer_cfg = om.create(tokenizer_cfg)
     tokenizer = build_tokenizer(tokenizer_cfg)
 
-    loader = build_text_dataloader(cfg, tokenizer, device_batch_size)
+    loader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
     tokenizer = loader.dataset.tokenizer  # type: ignore
     for batch_ix, batch in enumerate(islice(loader, 5)):
         print('\n')

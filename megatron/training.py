@@ -33,8 +33,9 @@ import numpy as np
 from megatron.utils import (
     Timers,
     init_wandb,
-    get_ltor_masks_and_position_ids, get_multimodal_ltor_masks_and_position_ids,
+    get_multimodal_ltor_masks_and_position_ids,
     reduce_losses,
+    MODALITY_DICT
 )
 
 from megatron import print_rank_0, mpu
@@ -276,26 +277,54 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     data_b = mpu.broadcast_data(keys, data, datatype)
 
     # Unpack text.
-    tokens_ = data_b["text"].long()
+    text_input_ = data_b["text_input"].long()
     if "labels" in data_b: # This our custom approach
         labels = data_b["labels"].long().contiguous()
-        tokens = tokens_.contiguous()
+        text_input = text_input_.contiguous()
     else:
-        labels = tokens_[:, 1:].contiguous()
-        tokens = tokens_[:, :-1].contiguous()
-
-    # Unpack images.
-    images = data_b["images"].half().contiguous()
+        labels = text_input_[:, 1:].contiguous()
+        text_input = text_input_[:, :-1].contiguous()
 
     # Unpack multimodal position ids.
     multimodal_position_ids = data_b["multimodal_position_ids"].long().contiguous()
 
+    max_text_length = text_input.shape[1]
+    text_positions = multimodal_position_ids[:, MODALITY_DICT['text'], :max_text_length]
+    text_input_info = {
+        "input": text_input,
+        "positions": text_positions,
+        "seq_length": 1
+    }
+
+    # Unpack vision_input.
+    vision_input = data_b["vision_input"].half().contiguous()
+    max_vision_length = vision_input.shape[1]
+    vision_positions = multimodal_position_ids[:, MODALITY_DICT['vision'], :max_vision_length]
+    vision_input_info = {
+        "input": vision_input,
+        "positions": vision_positions,
+        "seq_length": neox_args.vision_seq_length
+    }
+
+    # max_audio_length = audio_input.shape[1]
+    # audio_positions = multimodal_position_ids[:, MODALITY_DICT['audio'], :max_audio_length]
+    # audio_input_info = {
+    #     "input": audio_input,
+    #     "positions": audio_positions,
+    #     "seq_length": neox_args.audio_seq_length
+    # }
+    audio_input_info = None
+
+    input_info = {
+        "text": text_input_info,
+        "vision": vision_input_info,
+        "audio": audio_input_info
+    }
+
     # Get the masks and position ids.
     attention_mask, loss_mask, position_ids, shifted_multimodal_position_ids = get_multimodal_ltor_masks_and_position_ids(
-        text_tokens = tokens,
+        input_info=input_info,
         labels=labels,
-        multimodal_position_ids=multimodal_position_ids,
-        vision_seq_length=neox_args.vision_seq_length,
         input_seq_length=neox_args.seq_length,
         eod_token=neox_args.tokenizer.eod_id,
         bos_token=neox_args.tokenizer.bos_id if hasattr(neox_args.tokenizer, "bos_id") else None,
@@ -304,14 +333,14 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     )
 
     multimodal_position_ids = shifted_multimodal_position_ids # The shifted corrected version is directly used    
-    return tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids
+    return text_input, vision_input, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids
 
 
 def get_batch(neox_args, data_iterator):
     """Generate a batch"""
 
     # Items and their type.
-    keys =  ["text", "images", "multimodal_position_ids", "labels"]
+    keys =  ["text_input", "vision_input", "multimodal_position_ids", "labels"]
 
     datatype = torch.int64
 
@@ -332,19 +361,14 @@ def get_batch(neox_args, data_iterator):
 def get_batch_pipe(data, neox_args, curr_scheduler=None):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
     # Items and their type.
-    keys =  ["text", "images", "multimodal_position_ids", "labels"]    
+    keys =  ["text_input", "vision_input", "multimodal_position_ids", "labels"]    
     datatype = torch.int64
 
-    tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = _get_batch(
+    # Text Input is renamed to tokens since entire GPT NeoX pipeline expects "tokens"
+    tokens, vision_input, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = _get_batch(
         neox_args, neox_args.tokenizer, keys, data, datatype
     )
-    # print("Tokens shape", tokens.shape)
-    # print("Images shape", images.shape)
-    # print("Multimodal position ids shape", multimodal_position_ids.shape)
-    # print("Labels shape", labels.shape)
-    # print("Loss mask shape", loss_mask.shape)
-    # print("Attention mask shape", attention_mask.shape)
-    # print("Position ids shape", position_ids.shape)
+
     if curr_scheduler is not None:
         # iteration + 1 to align with how/when DeepSpeed updates the buffers
         curriculum_seqlen = curr_scheduler.update_difficulty(neox_args.iteration + 1)
@@ -364,7 +388,7 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
             ].contiguous()
 
     # unpack data
-    return (tokens, images, multimodal_position_ids, position_ids, attention_mask), (labels, loss_mask)
+    return (tokens, vision_input, multimodal_position_ids, position_ids, attention_mask), (labels, loss_mask)
 
 
 def forward_step(
@@ -377,14 +401,14 @@ def forward_step(
     # Get the batch.
     if timers is not None:
         timers("batch generator").start()
-    tokens, images, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = get_batch(
+    tokens, vision_input, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids = get_batch(
         neox_args=neox_args, data_iterator=data_iterator
     )
 
     if timers is not None:
         timers("batch generator").stop()
 
-    outputs = model((tokens, images, multimodal_position_ids, position_ids, attention_mask), neox_args=neox_args)
+    outputs = model((tokens, vision_input, multimodal_position_ids, position_ids, attention_mask), neox_args=neox_args)
     if (
         is_train
         and neox_args.curriculum_learning
@@ -895,7 +919,7 @@ def evaluate(
     forward_step_fn: function with args `neox_args, timers,
                     data_iterator & model that will run a forward pass on the model
     data_iterator: Iterator that iterates over batches of data. Should return data in the form:
-                    {'text': np.array([tokens], dtype=np.int64)}
+                    {'text_input': np.array([tokens], dtype=np.int64)}
                     where the size of the array is the model's context size + 1
                     (`get_batch` transforms it into inputs / labels)
     """

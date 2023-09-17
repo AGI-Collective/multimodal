@@ -127,7 +127,7 @@ def get_sequence_ids(tokens, eos_token_id, bos_token_id):
         bos_mode = True
 
     is_separator = torch.eq(tokens,
-                            self.split_token_id)  # type: ignore
+                            split_token_id)  # type: ignore
     cumulative_sep = torch.cumsum(is_separator,
                                     dim=1).to(tokens.dtype)
     # If separator token is bos, we're already done
@@ -138,17 +138,48 @@ def get_sequence_ids(tokens, eos_token_id, bos_token_id):
     left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
     return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
     
-def get_shifted_multimodal_position_ids(multimodal_position_ids, vision_seq_length):
+def get_shifted_multimodal_position_ids(input_info):
     
-    pass
+    text_positions = input_info["text"]["positions"]
+    vision_positions = input_info["vision"]["positions"]
+    # audio_positions = input_info["audio"]["positions"]
+
+    vision_seq_length = input_info["vision"]["seq_length"]
+    # audio_seq_length = input_info["audio"]["seq_length"]
+
+    T_B, T_L = text_positions.size()
+    V_B, V_L = vision_positions.size()
+    # A_B, A_L = audio_positions.size()
+    
+    # Concatenate all positions
+    # all_positions = torch.cat((text_positions, vision_positions, audio_positions), dim=1)
+    all_positions = torch.cat((text_positions, vision_positions), dim=1)
+    
+    # Calculate total shifts
+    img_shifts_total = (vision_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (vision_seq_length - 1)
+    # aud_shifts_total = (audio_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (audio_seq_length - 1)
+    
+    total_shifts = img_shifts_total # TODO + aud_shifts_total
+
+    # Add total shifts to all positions
+    all_positions_shifted = all_positions + total_shifts
+
+    # Split back and update vision_positions and audio_positions
+    shifted_text_positions = all_positions_shifted[:, :T_L]
+    shifted_vision_positions = (all_positions_shifted[:, T_L:T_L+V_L]).repeat_interleave(vision_seq_length, dim=1) + torch.arange(vision_seq_length).repeat(V_B, V_L).type_as(vision_positions)
+    # shited_audio_positions = (all_positions_shifted[:, -A_L:]).repeat_interleave(audio_seq_length, dim=1) + torch.arange(audio_seq_length).repeat(A_B, A_L).type_as(audio_positions)
+    shited_audio_positions = None
+    return shifted_text_positions, shifted_vision_positions, shited_audio_positions
 
 def get_proxy_tokens(position_ids, seq_length, start_ind=100):
     positive_mask = position_ids > 0
-    proxy_tokens = -1*torch.arange(start_ind, start_ind + positive_mask.shape[1]).expand_as(positive_mask) # All vision tokens are given a negative index
+
+    # All vision tokens are given a negative index
+    proxy_tokens = -1*torch.arange(start_ind, start_ind + positive_mask.shape[1]).expand_as(positive_mask).to(positive_mask.device)
     proxy_tokens = torch.repeat_interleave(proxy_tokens, seq_length, dim=1)
     positive_mask = torch.repeat_interleave(positive_mask, seq_length, dim=1)
     proxy_masked_tokens = proxy_tokens*positive_mask
-    proxy_masked_tokens[proxy_masked_tokens == 0] = -1
+    proxy_masked_tokens[proxy_masked_tokens == 0] = 100 
     return proxy_masked_tokens
 
 def get_multimodal_mask(interleaved_tokens):
@@ -162,28 +193,27 @@ def get_multimodal_mask(interleaved_tokens):
     return multimodal_mask
 
 def get_multimodal_attn_mask(
-        text_tokens, 
-        labels,
-        multimodal_position_ids,
-        shifted_multimodal_position_ids, 
+        text_tokens,
+        vision_positions,
+        audio_positions,
+        vision_seq_length,
         input_seq_length,
-        vision_seq_length, 
+        shifted_multimodal_position_ids, 
         eos_token_id,
         bos_token_id,
-        concat_data, 
-        attn_uses_sequence_id, 
+        concat_data,
+        attn_uses_sequence_id,
         device
     ):
     """
     Get multimodal attention mask
     """
-    batch_size = multimodal_position_ids.shape[0]
+    batch_size = text_tokens.shape[0]
     # lower triangular attention mask across all tokens
     mask = torch.tril(torch.ones((1, input_seq_length, input_seq_length), device=device)).expand((batch_size, -1, -1))
 
     # Form vision proxy tokens using shifted multimodal position ids
-    vision_indices = multimodal_position_ids[:, MODALITY_DICT['vision'], :].copy()
-    proxy_vision_tokens = get_proxy_tokens(vision_indices, vision_seq_length)
+    proxy_vision_tokens = get_proxy_tokens(vision_positions, vision_seq_length)
     # Do the same process for Audio #TODO
 
     # Concatenate vision proxy tokens with text tokens 
@@ -193,7 +223,7 @@ def get_multimodal_attn_mask(
     # Equvivalent to : interleaved_tokens = torch.gather(concat_tokens, 1, shifted_multimodal_position_ids)
     
     # Use advanced indexing
-    batch_indices = torch.arange(concat_tokens.size(0))[:, None] 
+    batch_indices = torch.arange(batch_size)[:, None] 
     interleaved_tokens = concat_tokens[batch_indices, shifted_multimodal_position_ids]
 
     
@@ -217,17 +247,15 @@ def get_multimodal_attn_mask(
     
     # convert to binary
     mask = mask.view(
-        1, 1, input_seq_length, input_seq_length
+        batch_size, 1, input_seq_length, input_seq_length
     )
     return mask < 0.5 # TODO Why?
 
 
 def get_multimodal_ltor_masks_and_position_ids(
-    text_tokens,
+    input_info,
     labels,
-    multimodal_position_ids,
     input_seq_length,
-    vision_seq_length,
     eod_token,
     bos_token,
     concat_data=True,
@@ -236,21 +264,27 @@ def get_multimodal_ltor_masks_and_position_ids(
 ):
     """Build masks and position id for left to right model."""
 
-    # Extract batch size and sequence length.
-    batch_size = multimodal_position_ids.shape[0]
+    # Extract batch size and label length
+    batch_size = labels.shape[0]
     label_length = labels.shape[1]
-
-    shifted_multimodal_position_ids = get_shifted_multimodal_position_ids(multimodal_position_ids, vision_seq_length)
-
-    # Attention mask (lower triangular).
+    
+    shifted_text_positions, shifted_vision_positions, shited_audio_positions = get_shifted_multimodal_position_ids(input_info)
+    
+    # Concatenate all of them
+    # Include Audio
+    # shifted_multimodal_position_ids = torch.cat((shifted_text_positions, shifted_vision_positions, shited_audio_positions), dim=1)
+    shifted_multimodal_position_ids = torch.cat((shifted_text_positions, shifted_vision_positions), dim=1)
+    
+    # Attention mask (lower triangular). # TODO: INCLUDE Audio in this
     attention_mask = get_multimodal_attn_mask(
-        text_tokens=text_tokens,
+        text_tokens=input_info["text"]["input"],
+        vision_positions=input_info["vision"]["positions"],
+        audio_positions=None,
+        vision_seq_length=input_info["vision"]["seq_length"],
         input_seq_length=input_seq_length,
-        vision_seq_length=vision_seq_length,
-        multimodal_position_ids=multimodal_position_ids,
         shifted_multimodal_position_ids=shifted_multimodal_position_ids,
-        eos_token=eod_token,
-        bos_token=bos_token,
+        eos_token_id=eod_token,
+        bos_token_id=bos_token,
         concat_data=concat_data,
         attn_uses_sequence_id=attn_uses_sequence_id,
         device=labels.device,
@@ -636,7 +670,7 @@ class CharCounter:
     def __next__(self):
         start = time.time()
         batch = self.data_iterator.__next__()
-        for b in batch["text"]:
+        for b in batch["text_input"]:
             self.token_count += len(b)
             self.char_count += len(self.tokenizer.detokenize(b.tolist()))
         self.batch_count += 1

@@ -47,7 +47,7 @@ class StreamingTextDataset(StreamingDataset):
     Args:
         tokenizer (Tokenizer): HuggingFace tokenizer to
             tokenize samples.
-        max_seq_len (int): The max sequence length of each sample.
+        max_seq_length (int): The max sequence length of each sample.
         streams (Sequence[Stream], optional): One or more Streams to stream/cache samples from,
             which may be upsampled or downsampled. StreamingDataset uses either ``streams`` or
             ``remote``/``local``. Defaults to ``None``.
@@ -93,7 +93,7 @@ class StreamingTextDataset(StreamingDataset):
 
     def __init__(self,
                  tokenizer: PreTrainedTokenizerBase,
-                 max_seq_len: int,
+                 max_seq_length: int,
                  streams: Optional[Sequence[Stream]] = None,
                  remote: Optional[str] = None,
                  local: Optional[str] = None,
@@ -156,7 +156,7 @@ class StreamingTextDataset(StreamingDataset):
             shuffle_block_size=shuffle_block_size,
         )
         self.tokenizer = tokenizer
-        self.max_seq_len = max_seq_len
+        self.max_seq_length = max_seq_length
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample: Mapping):
@@ -168,12 +168,12 @@ class StreamingTextDataset(StreamingDataset):
         return self.tokenizer(text_sample['text'],
                               truncation=True,
                               padding='max_length',
-                              max_length=self.max_seq_len)
+                              max_length=self.max_seq_length)
 
     def _read_binary_tokenized_sample(self, sample: Dict[str, Any]):
         return torch.from_numpy(
             np.frombuffer(sample['tokens'],
-                          dtype=np.int64)[:self.max_seq_len].copy())
+                          dtype=np.int64)[:self.max_seq_length].copy())
 
     # How to process a sample
     def __getitem__(self, idx: int):
@@ -330,7 +330,7 @@ if __name__ == '__main__':
                         type=str,
                         default='val',
                         help='which split of the dataset to use')
-    parser.add_argument('--max_seq_len',
+    parser.add_argument('--max_seq_length',
                         type=int,
                         default=32,
                         help='max sequence length to test')
@@ -351,7 +351,7 @@ if __name__ == '__main__':
             'remote': args.remote_path,
             'split': args.split,
             'shuffle': False,
-            'max_seq_len': args.max_seq_len,
+            'max_seq_length': args.max_seq_length,
             'keep_zip': True,  # in case we need compressed files after testing
         },
         'drop_last': False,
@@ -361,7 +361,7 @@ if __name__ == '__main__':
     device_batch_size = 2
 
     tokenizer_cfg = {'name': args.tokenizer, 'kwargs': {}}
-    tokenizer_cfg['kwargs'] = {'model_max_length': args.max_seq_len}
+    tokenizer_cfg['kwargs'] = {'model_max_length': args.max_seq_length}
     tokenizer_cfg = om.create(tokenizer_cfg)
     tokenizer = build_tokenizer(tokenizer_cfg)
 

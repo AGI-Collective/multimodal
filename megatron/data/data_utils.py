@@ -323,7 +323,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
 
         def prepare_config(dataset_config):
             dataset_config['num_workers'] = neox_args.num_workers
-            dataset_config['dataset']['max_seq_len'] = neox_args.seq_length
+            dataset_config['dataset']['max_seq_length'] = neox_args.seq_length
             dataset_config['dataset']['eos_token_id'] = neox_args.tokenizer.eod_id
             dataset_config['dataset']['remote'] = None # TODO Allow remote datasets
 
