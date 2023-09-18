@@ -272,9 +272,9 @@ def get_multimodal_ltor_masks_and_position_ids(
     input_seq_length,
     eod_token,
     bos_token,
+    pad_token,
     concat_data=True,
     attn_uses_sequence_id=False,
-    pad_token=None,
 ):
     """Build masks and position id for left to right model."""
 
@@ -299,6 +299,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         shifted_multimodal_position_ids=shifted_multimodal_position_ids,
         eos_token_id=eod_token,
         bos_token_id=bos_token,
+        pad_token_id=pad_token,
         concat_data=concat_data,
         attn_uses_sequence_id=attn_uses_sequence_id,
         device=labels.device,
