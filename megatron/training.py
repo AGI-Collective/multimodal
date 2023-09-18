@@ -328,6 +328,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         input_seq_length=neox_args.seq_length,
         eod_token=neox_args.tokenizer.eod_id,
         bos_token=neox_args.tokenizer.bos_id if hasattr(neox_args.tokenizer, "bos_id") else None,
+        pad_token=neox_args.tokenizer.pad_id,
         concat_data=neox_args.concat_data,
         attn_uses_sequence_id=neox_args.attn_uses_sequence_id
     )

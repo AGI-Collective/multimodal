@@ -170,11 +170,89 @@ def test_get_shifted_multimodal_position_ids():
     assert torch.all(torch.abs(new_vision_positions - torch.tensor([[1, 2, 3, 6, 7, 8, 12, 13, 14], [3, 4, 5, 9, 10, 11, 12, 13, 14]])) < eps)
 
 def test_get_proxy_tokens():
+    eps = 1e-7
     
-    pass
+    # Case 1: 1 image
+    vision_positions = torch.tensor([[1]])
+    vision_seq_len = 1
+    proxy_vision_tokens = utils.get_proxy_tokens(position_ids=vision_positions, seq_length=vision_seq_len)
+    assert torch.all(torch.abs(proxy_vision_tokens - torch.tensor([[-100]])) < eps)
+
+    # Case 2: multiple images 
+    vision_positions = torch.tensor([[1, 2]])
+    vision_seq_len = 1
+    proxy_vision_tokens = utils.get_proxy_tokens(position_ids=vision_positions, seq_length=vision_seq_len)
+    assert torch.all(torch.abs(proxy_vision_tokens - torch.tensor([[-100, -101]])) < eps)
+
+    # Case 3: multiple images, seq len > 1
+    vision_positions = torch.tensor([[3, 5]])
+    vision_seq_len = 3
+    proxy_vision_tokens = utils.get_proxy_tokens(position_ids=vision_positions, seq_length=vision_seq_len)
+    assert torch.all(torch.abs(proxy_vision_tokens - torch.tensor([[-100, -100, -100, -101, -101, -101]])) < eps)
+
+    # Case 4: multiple samples with padding
+    vision_positions = torch.tensor([[1, 2], [3, -1]])
+    vision_seq_len = 2
+    proxy_vision_tokens = utils.get_proxy_tokens(position_ids=vision_positions, seq_length=vision_seq_len)
+    assert torch.all(torch.abs(proxy_vision_tokens - torch.tensor([[-100, -100, -101, -101], [-100, -100, 100, 100]])) < eps)
 
 def test_get_multimodal_mask():
-    pass
+    
+    # Case 1: 1 image
+    tokens = torch.tensor([[-100]])
+    multimodal_mask = utils.get_multimodal_mask(tokens)
+    assert torch.all(multimodal_mask == torch.tensor([[[True]]]))
+
+    # Case 2: 2 image with multiple tokens per image
+    tokens = torch.tensor([[-100, -100, -101, -101]])
+    multimodal_mask = utils.get_multimodal_mask(tokens)
+    correct_mask = torch.tensor([
+        [
+            [True, True, False, False],
+            [True, True, False, False],
+            [False, False, True, True],
+            [False, False, True, True]
+        ]
+    ])
+    assert torch.all(multimodal_mask == correct_mask)
+
+    # Case 2: Multiple images with multiple tokens per image and text
+    tokens = torch.tensor([[0, -100, -100, 1, -101, -101]])
+    multimodal_mask = utils.get_multimodal_mask(tokens)
+    correct_mask = torch.tensor([
+        [
+            [False, False, False, False, False, False],
+            [False, True, True, False, False, False],
+            [False, True, True, False, False, False],
+            [False, False, False, False, False, False],
+            [False, False, False, False, True, True],
+            [False, False, False, False, True, True],
+        ]
+    ])
+    assert torch.all(multimodal_mask == correct_mask)
+
+    # Case 3: Multiple samples with text, images, and padding
+    tokens = torch.tensor([[0, -100, -100, 1, -101, -101], [3, -100, -100, -101, -101, -1]])
+    multimodal_mask = utils.get_multimodal_mask(tokens)
+    correct_mask = torch.tensor([
+        [
+            [False, False, False, False, False, False],
+            [False, True, True, False, False, False],
+            [False, True, True, False, False, False],
+            [False, False, False, False, False, False],
+            [False, False, False, False, True, True],
+            [False, False, False, False, True, True],
+        ], 
+        [
+            [False, False, False, False, False, False],
+            [False, True, True, False, False, False],
+            [False, True, True, False, False, False],
+            [False, False, False, True, True, False],
+            [False, False, False, True, True, False],
+            [False, False, False, False, False, False],
+        ]
+    ])
+    assert torch.all(multimodal_mask == correct_mask)
 
 def test_get_multimodal_attn_mask():
     pass 

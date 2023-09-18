@@ -138,7 +138,7 @@ def get_sequence_ids(tokens, eos_token_id, bos_token_id):
     left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
     return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
     
-def get_shifted_multimodal_position_ids(input_info):
+def get_shifted_multimodal_position_ids(input_info, pad_id=-1):
     
     text_positions = input_info["text"]["positions"]
     vision_positions = input_info["vision"]["positions"]
@@ -156,7 +156,7 @@ def get_shifted_multimodal_position_ids(input_info):
     all_positions = torch.cat((text_positions, vision_positions), dim=1)
     
     # Replace all -1s with increasing values after max value when concatenated
-    mask = all_positions == -1
+    mask = all_positions == pad_id
     max_vals, _ = all_positions.max(dim=-1)
     max_vals_extended = max_vals.view(-1,1).expand(-1, mask.shape[1])
     cumulative_counts = mask.cumsum(dim=-1)
@@ -165,7 +165,7 @@ def get_shifted_multimodal_position_ids(input_info):
 
     # Replace all vision positoins with new vision positions
     vision_positions = all_positions[:, T_L:T_L+V_L]
-    
+
     # Calculate total shifts
     img_shifts_total = (vision_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (vision_seq_length - 1)
     # aud_shifts_total = (audio_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (audio_seq_length - 1)
@@ -182,19 +182,20 @@ def get_shifted_multimodal_position_ids(input_info):
     shited_audio_positions = None
     return shifted_text_positions, shifted_vision_positions, shited_audio_positions
 
-def get_proxy_tokens(position_ids, seq_length, start_ind=100):
-    positive_mask = position_ids > 0
+def get_proxy_tokens(position_ids, seq_length, pad_id=-1, start_ind=100):
+    multimodal_mask = position_ids != pad_id
 
     # All vision tokens are given a negative index
-    proxy_tokens = -1*torch.arange(start_ind, start_ind + positive_mask.shape[1]).expand_as(positive_mask).to(positive_mask.device)
+    proxy_tokens = -1*torch.arange(start_ind, start_ind + multimodal_mask.shape[1]).expand_as(multimodal_mask).to(multimodal_mask.device)
     proxy_tokens = torch.repeat_interleave(proxy_tokens, seq_length, dim=1)
-    positive_mask = torch.repeat_interleave(positive_mask, seq_length, dim=1)
-    proxy_masked_tokens = proxy_tokens*positive_mask
-    proxy_masked_tokens[proxy_masked_tokens == 0] = 100 
+    multimodal_mask = torch.repeat_interleave(multimodal_mask, seq_length, dim=1)
+    proxy_masked_tokens = proxy_tokens*multimodal_mask
+    proxy_masked_tokens[proxy_masked_tokens == 0] = 100 # This is any random text token. This cannot be equal to pad idx, eos, or eod
     return proxy_masked_tokens
 
-def get_multimodal_mask(interleaved_tokens):
-    interleaved_mask = interleaved_tokens < 0
+def get_multimodal_mask(interleaved_tokens, pad_id=-1):
+    # Find all the multimodal models (negative indices) and ignore pad id
+    interleaved_mask = (interleaved_tokens < 0) * (interleaved_tokens != pad_id)
     interleaved_multimodal_tokens = interleaved_tokens*interleaved_mask
 
     interleaved_multimodal_tokens_3d_1 = interleaved_multimodal_tokens.unsqueeze(-1)
@@ -212,6 +213,7 @@ def get_multimodal_attn_mask(
         shifted_multimodal_position_ids, 
         eos_token_id,
         bos_token_id,
+        pad_token_id,
         concat_data,
         attn_uses_sequence_id,
         device
@@ -239,11 +241,12 @@ def get_multimodal_attn_mask(
 
     
     # assert that all tokens after input_seq_length are -1s (padding)
-    assert torch.all(interleaved_tokens[:, input_seq_length:] == -1)
+    assert torch.all(interleaved_tokens[:, input_seq_length:] == pad_token_id)
+    
     interleaved_tokens = interleaved_tokens[:, :input_seq_length]
 
     # No masking across vision tokens 
-    vision_mask = get_multimodal_mask(interleaved_tokens)
+    vision_mask = get_multimodal_mask(interleaved_tokens, pad_id=pad_token_id)
     mask = mask+vision_mask
     mask = torch.clip(mask, 0, 1)
 
