@@ -243,19 +243,23 @@ class HFTokenizer(AbstractTokenizer):
     def inv_vocab(self):
         return self.tokenizer.decoder
 
-    def tokenize(self, texts: Union[str, List[str]], context_length=2048):
+    def tokenize(self, texts: Union[str, List[str]], pad=True, tensor=True, context_length=2048):
         if isinstance(texts, str):
             texts = [texts]
         texts = [whitespace_clean(basic_clean(text)) for text in texts]
         input_ids = [encoding.ids for encoding in self.tokenizer.encode_batch(texts)]
         # add eod_id and pad with pad_id
-        for idx,ids in enumerate(input_ids):
-            if len(ids) < self.seq_length:
-                ids = ids+[self.eod_id]+[self.pad_id]*(self.seq_length-len(ids)-1)
-            else: # truncated
-                ids = ids[:-1]+[self.eod_id]
-            input_ids[idx]=ids
-        input_ids = torch.tensor(input_ids,dtype=torch.int64) 
+        if pad:
+            for idx,ids in enumerate(input_ids):
+                if len(ids) < self.seq_length:
+                    ids = ids+[self.eod_id]+[self.pad_id]*(self.seq_length-len(ids)-1)
+                else: # truncated
+                    ids = ids[:-1]+[self.eod_id]
+                input_ids[idx]=ids
+        if tensor:
+            input_ids = torch.tensor(input_ids,dtype=torch.int64) 
+        elif len(input_ids) == 1:
+            input_ids = input_ids[0]
         return input_ids
 
     def tokenize_batch(self, text_batch: Union[List[str], str]):

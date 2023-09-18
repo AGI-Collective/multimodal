@@ -78,8 +78,8 @@ def get_attn_mask(seq_length, device):
 
 def get_ltor_masks_and_position_ids(
     data,
-    pad_token,
     eod_token,
+    pad_token=None,
     eod_mask_loss=False,
 ):
     """Build masks and position id for left to right model."""
@@ -95,7 +95,8 @@ def get_ltor_masks_and_position_ids(
 
     # Loss mask.
     loss_mask = torch.ones(data.size(), dtype=torch.float, device=data.device)
-    loss_mask[data == pad_token] = 0.0
+    if pad_token is not None:
+        loss_mask[data == pad_token] = 0.0
     if eod_mask_loss:
         loss_mask[data == eod_token] = 0.0
 
@@ -449,7 +450,7 @@ def setup_for_inference_or_eval(
     )  # we use setup_model_and_optimizer instead of get_model in order to initialize deepspeed
     print_rank_0("Finished loading model")
 
-    model.module.inference_mode(use_cache=use_cache)
+    # model.module.inference_mode(use_cache=use_cache)
     return model, neox_args
 
 
