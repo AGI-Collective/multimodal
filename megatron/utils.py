@@ -155,6 +155,17 @@ def get_shifted_multimodal_position_ids(input_info):
     # all_positions = torch.cat((text_positions, vision_positions, audio_positions), dim=1)
     all_positions = torch.cat((text_positions, vision_positions), dim=1)
     
+    # Replace all -1s with increasing values after max value when concatenated
+    mask = all_positions == -1
+    max_vals, _ = all_positions.max(dim=-1)
+    max_vals_extended = max_vals.view(-1,1).expand(-1, mask.shape[1])
+    cumulative_counts = mask.cumsum(dim=-1)
+    replacements = max_vals_extended + cumulative_counts
+    all_positions[mask] = replacements[mask]
+
+    # Replace all vision positoins with new vision positions
+    vision_positions = all_positions[:, T_L:T_L+V_L]
+    
     # Calculate total shifts
     img_shifts_total = (vision_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (vision_seq_length - 1)
     # aud_shifts_total = (audio_positions.unsqueeze(1) < all_positions.unsqueeze(-1)).sum(dim=-1) * (audio_seq_length - 1)
