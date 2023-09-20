@@ -246,17 +246,10 @@ class EmbeddingPipe(Embedding):
         all_embeddings = torch.cat([word_embeddings, image_embeddings], dim=1) # [B, T + T*N, E]
 
         # Rearrange the embeddigs based on multimodal position ids
-
-        # The following code is much faster but equivalent to : 
-        # torch.gather(all_embeddings, 1, multimodal_position_ids.unsqueeze(-1).expand(-1, -1, self.hidden_size)
-        batch_size = all_embeddings.shape[0]
-        time_steps = all_embeddings.shape[1]
-        batch_indices = torch.arange(batch_size).view(-1, 1).expand(-1, time_steps)
-        all_embeddings = all_embeddings[batch_indices, multimodal_position_ids]
-        # print(multimodal_position_ids[batch_indices, multimodal_position_ids].shape, multimodal_position_ids[batch_indices, multimodal_position_ids])
-        if multimodal_position_ids.shape[1] > self.seq_length:
-            assert all(multimodal_position_ids[batch_indices, multimodal_position_ids][:, self.seq_length:]) == -1, "Multimodal position ids should be -1 after the sequence length"
-        return all_embeddings, attention_mask
+        rearranged_embeddings = torch.zeros_like(all_embeddings, dtype=all_embeddings.dtype, device=all_embeddings.device)
+        multimodal_position_ids_repeated = multimodal_position_ids.unsqueeze(-1).expand(-1, -1, all_embeddings.shape[-1])
+        rearranged_embeddings = rearranged_embeddings.scatter_(1, multimodal_position_ids_repeated, all_embeddings)[:, :self.seq_length, :]
+        return rearranged_embeddings, attention_mask
 
 
 class SoftEmbedding(torch.nn.Module):
