@@ -13,13 +13,16 @@
    "max_position_embeddings": 2048,
    "norm": "layernorm",
    "pos_emb": "rotary",
+   "rotary-pct": 0.25,
    "no_weight_tying": true,
-   "gpt_j_residual": false,
+   "gpt_j_residual": true,
    "output_layer_parallelism": "column",
 
+   "attention-config": [[["flash"], 24]],
+
    # these should provide some speedup but takes a while to build, set to true if desired
-   "scaled_upper_triang_masked_softmax_fusion": false,
-   "bias_gelu_fusion": false,
+   "scaled_upper_triang_masked_softmax_fusion": true,
+   "bias_gelu_fusion": true,
 
    # init methods
    "init_method": "small_init",
@@ -45,11 +48,15 @@
     "reduce_scatter": True,
     "reduce_bucket_size": 500000000,
     "contiguous_gradients": True,
+    "cpu_offload": false
   },
 
    # batch / data settings
-   "train_micro_batch_size_per_gpu": 4,
-   "data_impl": "mmap",
+  #  "train_batch_size": 32,
+   "train_micro_batch_size_per_gpu": 8,
+   "gradient_accumulation_steps": 1,
+   "data-impl": "mmap",
+   "split": "949,50,1",
 
    # activation checkpointing
    "checkpoint_activations": true,
@@ -74,18 +81,24 @@
    },
 
    # misc. training settings
-   "train_iters": 320000,
-   "lr_decay_iters": 320000,
+   "train_iters": 12500,
+   "lr_decay_iters": 12500,
    "distributed_backend": "nccl",
    "lr_decay_style": "cosine",
    "warmup": 0.01,
-   "checkpoint_factor": 10000,
+   "checkpoint_factor": 100,
    "eval_interval": 1000,
    "eval_iters": 10,
 
    # logging
-   "log_interval": 100,
+   "log_interval": 10,
    "steps_per_print": 10,
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
+   
+  #  "launcher": "openmpi",
+  #  "launcher": "slurm",
+  #  "deepspeed_slurm": true
+  #  "deepspeed_mpi": true,
+  # "launcher": "openmpi"
 }
