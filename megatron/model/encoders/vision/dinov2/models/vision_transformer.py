@@ -19,6 +19,8 @@ from torch.nn.init import trunc_normal_
 
 from ..layers import Mlp, PatchEmbed, SwiGLUFFNFused, MemEffAttention, NestedTensorBlock as Block
 
+import einops
+from einops import rearrange
 
 logger = logging.getLogger("dinov2")
 
@@ -105,6 +107,7 @@ class DinoVisionTransformer(nn.Module):
         else:
             dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
 
+        self.dpr = dpr
         if ffn_layer == "mlp":
             logger.info("using MLP layer as FFN")
             ffn_layer = Mlp
@@ -286,12 +289,10 @@ class DinoVisionTransformer(nn.Module):
             return tuple(zip(outputs, class_tokens))
         return tuple(outputs)
 
-    def forward(self, *args, is_training=False, **kwargs):
+    def forward(self, *args, **kwargs):
         ret = self.forward_features(*args, **kwargs)
-        if is_training:
-            return ret
-        else:
-            return self.head(ret["x_norm_clstoken"])
+        # concat clstoken and all patch tokens to return all features
+        return torch.concat((ret['x_norm_clstoken'].unsqueeze(1),ret['x_norm_patchtokens']),dim=1)
 
 
 def init_weights_vit_timm(module: nn.Module, name: str = ""):
@@ -301,6 +302,166 @@ def init_weights_vit_timm(module: nn.Module, name: str = ""):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
+class DinoVisionWrapper(DinoVisionTransformer):
+    def __init__(self, img_size=224,
+        patch_size=16,
+        in_chans=3,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        ffn_bias=True,
+        proj_bias=True,
+        drop_path_rate=0.0,
+        drop_path_uniform=False,
+        init_values=None,  # for layerscale: None or 0 => no layerscale
+        embed_layer=PatchEmbed,
+        act_layer=nn.GELU,
+        block_fn=Block,
+        ffn_layer="mlp",
+        block_chunks=1, num_frames=5, **kwargs):
+
+        super().__init__(img_size=img_size,
+        patch_size=patch_size,
+        in_chans=in_chans,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        qkv_bias=qkv_bias,
+        ffn_bias=ffn_bias,
+        proj_bias=proj_bias,
+        drop_path_rate=drop_path_rate,
+        drop_path_uniform=drop_path_uniform,
+        init_values=init_values,  # for layerscale: None or 0 => no layerscale
+        embed_layer=embed_layer,
+        act_layer=act_layer,
+        block_fn=block_fn,
+        ffn_layer=ffn_layer,
+        block_chunks=block_chunks, **kwargs)
+        norm_layer = partial(nn.LayerNorm, eps=1e-6)
+
+
+        temporal_blocks_list = [
+            block_fn(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                proj_bias=proj_bias,
+                ffn_bias=ffn_bias,
+                drop_path=self.dpr[i],
+                norm_layer=norm_layer,
+                act_layer=act_layer,
+                ffn_layer=nn.Linear,
+                init_values=init_values,
+            )
+            for i in range(depth)
+        ]
+        if block_chunks > 0:
+            self.chunked_blocks = True
+            chunked_blocks = []
+            chunksize = depth // block_chunks
+            for i in range(0, depth, chunksize):
+                # this is to keep the block index consistent if we chunk the block list
+                chunked_blocks.append([nn.Identity()] * i + temporal_blocks_list[i : i + chunksize])
+            self.temporal_blocks = nn.ModuleList([BlockChunk(p) for p in chunked_blocks])
+        else:
+            self.chunked_blocks = False
+            self.temporal_blocks = nn.ModuleList(temporal_blocks_list)      
+        
+        self.time_embed = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
+        self.time_drop = nn.Dropout(p=drop_path_rate)
+
+
+    # If get_intermediate_layers is called, raise not implemented error
+    def get_intermediate_layers(self, *args, **kwargs):
+        raise NotImplementedError("DinoWrapper does not support get_intermediate_layers")   
+    
+    def forward_features_list(self, x_list, masks_list):
+        x = [self.prepare_tokens_with_masks(x, masks) for x, masks in zip(x_list, masks_list)]
+        for blk in self.blocks:
+            x = blk(x)
+
+        all_x = x
+        output = []
+        for x, masks in zip(all_x, masks_list):
+            x_norm = self.norm(x)
+            output.append(
+                {
+                    "x_norm_clstoken": x_norm[:, 0],
+                    "x_norm_patchtokens": x_norm[:, 1:],
+                    "x_prenorm": x,
+                    "masks": masks,
+                }
+            )
+        return output
+
+    def forward_features(self, x, masks=None):
+        '''
+        x: (b, f, c, h, w)
+
+        '''
+        if isinstance(x, list):
+            raise NotImplementedError("DinoVisionWrapper does not support list input")
+            # return self.forward_features_list(x, masks)
+        
+        B, T, C, _, _ = x.shape
+        x = rearrange(x, "b t c h w -> (b t) c h w")
+        x = self.prepare_tokens_with_masks(x, masks) # (B*F, HW + 1, E)
+
+        # Time Embeddings
+        cls_tokens = x[:, 0, :].unsqueeze(1)
+        x = x[:,1:, :]
+        x = rearrange(x, '(b t) n m -> (b n) t m',b=B,t=T)
+        ## Resizing time embeddings in case they don't match
+        if T != self.time_embed.size(1):
+            time_embed = self.time_embed.transpose(1, 2)
+            new_time_embed = T.interpolate(time_embed, size=(T), mode='nearest')
+            new_time_embed = new_time_embed.transpose(1, 2)
+            x = x + new_time_embed
+        else:
+            x = x + new_time_embed
+    
+        x = self.time_drop(x)
+        
+        x = rearrange(x, '(b n) t m -> (b t) n m',b=B,t=T)
+        x = torch.cat((cls_tokens, x), dim=1)
+        # x = rearrange(x, '(b t) n m -> b (n t) m',b=B,t=T)
+        
+        for i, blk in enumerate(self.blocks):
+
+            # Do Temporal Attention
+
+            # Get rid of CLS token
+            cls_tokens = x[:, 0, :].unsqueeze(1)
+            xt = x[:,1:,:]
+            xt = rearrange(xt, '(b t) n m -> (b n) t m',b=B,t=T)
+            res_temporal = self.temporal_blocks[i](xt)
+     
+            xt = x[:,1:,:] + res_temporal
+            xt = rearrange(xt, '(b n) t m -> (b t) n m',b=B,t=T)
+            x = torch.cat((cls_tokens, xt), dim=1)
+
+            # Do Spatial Attention
+            x = blk(x)
+        
+        x_prenorm = x
+        x_prenorm = rearrange(x_prenorm, '(b t) n m -> b (t n) m',b=B,t=T)
+        x_norm = self.norm(x)
+        x_norm = rearrange(x_norm, 'b (t n) m -> (b t) n m',b=B,t=T)
+        cls_tokens = x_norm[:, 0, :].unsqueeze(1)
+        cls_tokens = rearrange(cls_tokens, '(b t) n m -> b (t n) m',b=B,t=T)
+        x_norm = x_norm[:, 1:, :]
+        x_norm = rearrange(x_norm, '(b t) n m -> b (t n) m',b=B,t=T)
+
+        return {
+            "x_norm_clstoken": cls_tokens,
+            "x_norm_patchtokens": x_norm,
+            "x_prenorm": x_prenorm,
+            "masks": masks,
+        }
 
 def vit_small(patch_size=16, **kwargs):
     model = DinoVisionTransformer(
@@ -314,6 +475,17 @@ def vit_small(patch_size=16, **kwargs):
     )
     return model
 
+def vit_vision_small(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+            patch_size=patch_size,
+            embed_dim=384,
+            depth=12,
+            num_heads=6,
+            mlp_ratio=4,
+            block_fn=partial(Block, attn_class=MemEffAttention),
+            **kwargs,
+        )
+    return model
 
 def vit_base(patch_size=16, **kwargs):
     model = DinoVisionTransformer(
@@ -326,6 +498,18 @@ def vit_base(patch_size=16, **kwargs):
         **kwargs,
     )
     return model
+
+def vit_vision_base(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+        patch_size=patch_size,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+        )
+    return
 
 
 def vit_large(patch_size=16, **kwargs):
@@ -340,6 +524,17 @@ def vit_large(patch_size=16, **kwargs):
     )
     return model
 
+def vit_vision_large(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+        patch_size=patch_size,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        **kwargs,
+        )
+    return model
 
 def vit_giant2(patch_size=16, **kwargs):
     """
@@ -354,4 +549,16 @@ def vit_giant2(patch_size=16, **kwargs):
         block_fn=partial(Block, attn_class=MemEffAttention),
         **kwargs,
     )
+    return model
+
+def vit_vision_giant2(patch_size=16, **kwargs):
+    model = DinoVisionWrapper(
+            patch_size=patch_size,
+            embed_dim=1536,
+            depth=40,
+            num_heads=24,
+            mlp_ratio=4,
+            block_fn=partial(Block, attn_class=MemEffAttention),
+            **kwargs,
+        )
     return model
