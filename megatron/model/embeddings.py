@@ -20,6 +20,14 @@ from megatron import mpu
 from megatron.model.positional_embeddings import SinusoidalPositionalEmbedding
 from megatron.model.init_functions import get_init_methods
 # from megatron.model.encoders.image_encoders import ImageEncoder
+from transformers import AutoImageProcessor, AutoModel
+from PIL import Image
+import requests
+
+import einops
+from einops import rearrange
+
+from megatron.utils import MODALITY_DICT
 
 class Embedding(torch.nn.Module):
     """Language model embeddings.
@@ -168,16 +176,41 @@ class ImageEncoder(torch.nn.Module):
     def __init__(self, neox_args):
         super().__init__()
         self.neox_args = neox_args
-        self.encoder_layer = torch.nn.Linear((224*224*3), neox_args.hidden_size)
+        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+        self.model = AutoModel.from_pretrained('facebook/dinov2-base')
+        self.encoder_layer = torch.nn.Linear(768, neox_args.hidden_size)
+        url = 'http://images.cocodataset.org/val2017/000000039769.jpg'
+        image = Image.open(requests.get(url, stream=True).raw)
+        self.image = image
+
 
     def forward(self, images):
-        batch_size = images.shape[0]
-        max_seq_len = images.shape[1]
-        images = images.reshape(batch_size*max_seq_len, -1)
-        embeddings = self.encoder_layer(images)
-        embeddings = embeddings.reshape(batch_size, max_seq_len, -1)
-        return embeddings
+        # images is [B, T, F, C, H, W]
+        num_images = images.shape[1]
+        original_batch_size = images.shape[0]
+        images = rearrange(images, "b t f c h w -> (b t) f c h w")
 
+        batch_size = images.shape[0]
+        max_seq_length = images.shape[1]
+        # images = images.reshape(batch_size, max_seq_length, -1)
+        # print("Shape of images", images.shape)
+
+        # images = images.reshape((images.shape[0] * images.shape[1], images.shape[2], images.shape[3], images.shape[4]))
+        images_2 = self.processor(self.image, return_tensors="pt", padding=True)
+        # print(images_2)
+        image = images_2["pixel_values"]
+        #replicate the image to match the batch size
+        image = image.repeat(images.shape[0] * images.shape[1], 1, 1, 1)
+        images_2["pixel_values"] = image
+        # Convert to image to c10::Half
+        images_2["pixel_values"] = images_2["pixel_values"].half().to(self.model.device)
+        output = self.model(**images_2).last_hidden_state
+        # images = images.reshape()
+        output = output[:, 0, :]
+        embeddings = self.encoder_layer(output)
+        embeddings = embeddings.reshape(batch_size, max_seq_length, -1)  
+        embeddings = rearrange(embeddings, "(b t) n f -> b t n f", b=original_batch_size, t=num_images)
+        return embeddings
 
 class EmbeddingPipe(Embedding):
     """Extends Embedding to forward attention_mask through the pipeline."""
@@ -185,6 +218,7 @@ class EmbeddingPipe(Embedding):
     def __init__(self, neox_args, *args, **kwargs):
         super().__init__(neox_args, *args, **kwargs)
         self.image_encoder = ImageEncoder(neox_args)
+        self.seq_length = neox_args.seq_length
 
     @property
     def word_embeddings_weight(self):
@@ -194,29 +228,28 @@ class EmbeddingPipe(Embedding):
     def forward(self, args):
         assert (
             len(args) == 5
-        ), f"Expected 3 arguments (input_ids, images, multimodal_position_ids, position_ids, attention_mask), but got {len(args)}."
+        ), f"Expected 3 arguments (input_ids, vision_input, multimodal_position_ids, position_ids, attention_mask), but got {len(args)}."
 
         input_ids = args[0]
-        images = args[1]
-        multimodal_position_ids = args[2]
+        vision_input = args[1]
+        multimodal_position_ids = args[2] # [B, T]
+        assert self.seq_length == torch.max(multimodal_position_ids)+1
         position_ids = args[3]
         attention_mask = args[4]
-        word_embeddings = super().forward(input_ids, position_ids) # [B, T, E]
-        image_embeddings = self.image_encoder(images) # [B, T, E]
-        # Concatenate the embeddings based on the multimodal position ids # TODO
-        number_of_modalities = multimodal_position_ids.shape[0]
-        batch_size = multimodal_position_ids.shape[1]
-        max_seq_len = multimodal_position_ids.shape[2]
-    
-        embeddings = torch.zeros((batch_size, max_seq_len, self.hidden_size)).to(
-            word_embeddings.device
-        )
-
-        multimodal_position_ids = multimodal_position_ids.permute(1, 0, 2).reshape(batch_size, -1) #TODO Check
-
-        embeddings[multimodal_position_ids] = torch.cat([word_embeddings, image_embeddings], dim=1)
         
-        return embeddings, attention_mask
+        word_embeddings = super().forward(input_ids, position_ids) # [B, T, E]
+        # Vision Input is [B, T, F, C, H, W]
+        image_embeddings = self.image_encoder(vision_input) # [B, T, N, E] where N=1 for now 
+        image_embeddings = rearrange(image_embeddings, "b t n e -> b (t n) e") # [B, T*N, E]
+        
+        # Concatenate the embeddings
+        all_embeddings = torch.cat([word_embeddings, image_embeddings], dim=1) # [B, T + T*N, E]
+
+        # Rearrange the embeddigs based on multimodal position ids
+        rearranged_embeddings = torch.zeros_like(all_embeddings, dtype=all_embeddings.dtype, device=all_embeddings.device)
+        multimodal_position_ids_repeated = multimodal_position_ids.unsqueeze(-1).expand(-1, -1, all_embeddings.shape[-1])
+        rearranged_embeddings = rearranged_embeddings.scatter_(1, multimodal_position_ids_repeated, all_embeddings)[:, :self.seq_length, :]
+        return rearranged_embeddings, attention_mask
 
 
 class SoftEmbedding(torch.nn.Module):

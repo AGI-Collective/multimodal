@@ -1174,6 +1174,14 @@ class NeoXArgs(*BASE_CLASSES):
             raise ValueError(error_message)
             return False
 
+        
+        # assert that any of train/test/valid_data_path should not be provided since it is not supported
+        if any([self.train_data_paths, self.valid_data_paths, self.test_data_paths]):
+            assert False, (
+                "train/valid/test_data_path is not supported currently in Neox arguments. "
+                "Please use `*_streaming_data_config` instead."
+            )
+
         # assert that if one of train/test/valid_data_path are provided, data_path should not be
         has_separate_path = [
             data_path is not None

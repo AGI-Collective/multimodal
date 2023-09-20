@@ -19,6 +19,8 @@ from torch.nn.init import trunc_normal_
 
 from ..layers import Mlp, PatchEmbed, SwiGLUFFNFused, MemEffAttention, NestedTensorBlock as Block
 
+import einops
+from einops import rearrange
 
 logger = logging.getLogger("dinov2")
 
@@ -105,6 +107,7 @@ class DinoVisionTransformer(nn.Module):
         else:
             dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
 
+        self.dpr = dpr
         if ffn_layer == "mlp":
             logger.info("using MLP layer as FFN")
             ffn_layer = Mlp
@@ -286,12 +289,10 @@ class DinoVisionTransformer(nn.Module):
             return tuple(zip(outputs, class_tokens))
         return tuple(outputs)
 
-    def forward(self, *args, is_training=False, **kwargs):
+    def forward(self, *args, **kwargs):
         ret = self.forward_features(*args, **kwargs)
-        if is_training:
-            return ret
-        else:
-            return self.head(ret["x_norm_clstoken"])
+        # concat clstoken and all patch tokens to return all features
+        return torch.concat((ret['x_norm_clstoken'].unsqueeze(1),ret['x_norm_patchtokens']),dim=1)
 
 
 def init_weights_vit_timm(module: nn.Module, name: str = ""):
@@ -300,7 +301,6 @@ def init_weights_vit_timm(module: nn.Module, name: str = ""):
         trunc_normal_(module.weight, std=0.02)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
-
 
 def vit_small(patch_size=16, **kwargs):
     model = DinoVisionTransformer(
@@ -313,7 +313,6 @@ def vit_small(patch_size=16, **kwargs):
         **kwargs,
     )
     return model
-
 
 def vit_base(patch_size=16, **kwargs):
     model = DinoVisionTransformer(

@@ -123,8 +123,7 @@ class ConcatTokensDataset(IterableDataset):
         text_buffer = []
         total_buffer = 0
         
-        for sample in self.hf_dataset:
-            
+        for sample in self.hf_dataset:            
             
                     
             text = sample["text"]#We have to assume it's continuous for now.
@@ -203,22 +202,28 @@ class ConcatTokensDataset(IterableDataset):
             #Second continue is because the code below this is old
             continue
                 
-            
-            while len(buffer) >= self.max_length:
-                concat_sample = buffer[:self.max_length]
-                buffer = buffer[self.max_length:] if self.should_wrap else []
+#             encoded = self.tokenizer(sample['text'],
+#                                      truncation=False,
+#                                      padding=False)
+#             iids = encoded['input_ids']
+#             buffer = buffer + self.bos_tokens + iids + self.eos_tokens
+#             # Create a np array of random vision_input (B, H, W, C) and convert to bytes and store in sample['vision_input']
+#             vision_input = np.random.randint(0, 255, size=(10, 1, 3, 224, 224))
+#             while len(buffer) >= self.max_length:
+#                 concat_sample = buffer[:self.max_length]
+#                 buffer = buffer[self.max_length:] if self.should_wrap else []
 
-                multimodal_position_ids = [torch.tensor(list(range(len(concat_sample)))), torch.tensor(list(range(len(concat_sample), len(concat_sample) + 10)))] # M, T
-                multimodal_position_ids = pad_sequence(multimodal_position_ids, batch_first=True, padding_value=-1)
-                multimodal_position_ids = multimodal_position_ids.numpy()
-                labels = np.random.randint(0, 2, size=(self.max_length+10))
-                yield {
-                    # convert to bytes to store in MDS binary format
-                    'tokens': np.asarray(concat_sample).tobytes(),
-                    'images': images,
-                    'multimodal_position_ids': multimodal_position_ids,
-                    'labels': labels,
-                }
+#                 multimodal_position_ids = [torch.tensor(list(range(len(concat_sample)))), torch.tensor(list(range(len(concat_sample), len(concat_sample) + 10)))] # M, T
+#                 multimodal_position_ids = pad_sequence(multimodal_position_ids, batch_first=True, padding_value=-1)
+#                 multimodal_position_ids = multimodal_position_ids.numpy()
+#                 labels = np.random.randint(0, 2, size=(self.max_length+10))
+#                 yield {
+#                     # convert to bytes to store in MDS binary format
+#                     'tokens': np.asarray(concat_sample).tobytes(),
+#                     'vision_input': vision_input,
+#                     'multimodal_position_ids': multimodal_position_ids,
+#                     'labels': labels,
+#                 }
     
 class ConcatMode(Enum):
     NO_CONCAT = 'NO_CONCAT'
@@ -377,21 +382,11 @@ def main(args: Namespace) -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
         # we will enforce length, so suppress warnings about sequences too long for the model
         tokenizer.model_max_length = int(1e30)
-        columns = {'tokens': 'bytes', 'images': 'ndarray', 'multimodal_position_ids': 'ndarray', 'labels': 'ndarray'}
+        columns = {'tokens': 'bytes', 'vision_input': 'ndarray', 'multimodal_position_ids': 'ndarray', 'labels': 'ndarray'}
     else:
         mode = ConcatMode.NO_CONCAT
         tokenizer = None
         columns = {'text': 'str'}
-
-    # Get samples
-    dataset = build_hf_dataset(path=args.path,
-                               split=args.split,
-                               mode=mode,
-                               max_length=args.concat_tokens,
-                               bos_text=args.bos_text,
-                               eos_text=args.eos_text,
-                               no_wrap=args.no_wrap,
-                               tokenizer=tokenizer)
 
     print('here')
 
@@ -403,9 +398,19 @@ def main(args: Namespace) -> None:
     print(f'It will finish at a value below 100% if tokenizing')
     with MDSWriter(columns=columns,
                    out=os.path.join(args.out_root),
-                   compression=args.compression) as out:
-        for sample in tqdm(dataset):
-            out.write(sample)
+                   compression=args.compression, size_limit=5.12e+8) as out:
+        for i in range(1):
+            # Get samples
+            dataset = build_hf_dataset(path=args.path,
+                                    split=args.split,
+                                    mode=mode,
+                                    max_length=args.concat_tokens,
+                                    bos_text=args.bos_text,
+                                    eos_text=args.eos_text,
+                                    no_wrap=args.no_wrap,
+                                    tokenizer=tokenizer)
+            for sample in tqdm(dataset):
+                out.write(sample)
 
 
 if __name__ == '__main__':
