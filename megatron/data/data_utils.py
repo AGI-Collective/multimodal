@@ -320,38 +320,30 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
     
     # Data loader only on rank 0 of each model parallel group.
     if mpu.get_model_parallel_rank() == 0 and pipe_load:
-        # the location of the "remote" streaming dataset (`sds`).
-        # Upload `out_root` to your cloud storage provider of choice. If `out_root` is a cloud provider
-        # path, shard files are automatically uploaded.
-        local_path = "/p/fastdata/mmlaion/hummingbird/streaming/interleaved"
+
+        def prepare_config(dataset_config):
+            dataset_config['num_workers'] = neox_args.num_workers
+            dataset_config['dataset']['max_seq_length'] = neox_args.seq_length
+            dataset_config['dataset']['eos_token_id'] = neox_args.tokenizer.eod_id
+            dataset_config['dataset']['remote'] = None # TODO Allow remote datasets
+
+        prepare_config(neox_args.train_streaming_data_config)
+        prepare_config(neox_args.valid_streaming_data_config)
+        prepare_config(neox_args.test_streaming_data_config)
+
+        train_dataset_cfg = om.create(neox_args.train_streaming_data_config)
+        validation_dataset_cfg = om.create(neox_args.valid_streaming_data_config)
+        test_dataset_cfg = om.create(neox_args.test_streaming_data_config)
         
-        cfg = {
-            'name': 'text',
-            'dataset': {
-                'local': local_path,
-                'remote': None,
-                'split': "train",
-                'shuffle': False,
-                'max_seq_len': 2048,
-                'keep_zip': True,  # in case we need compressed files after testing
-                'eos_token_id': 0,
-            },
-            'drop_last': False,
-            'num_workers': 4,
-        }
-        cfg = om.create(cfg)
-        device_batch_size = 2
+        device_batch_size = neox_args.batch_size # Set batch size correctly with mp and pp in mind # TODO
 
-        tokenizer_cfg = {'name': 'EleutherAI/gpt-neox-20b', 'kwargs': {}}
-        tokenizer_cfg['kwargs'] = {'model_max_length': 2048}
-        tokenizer_cfg = om.create(tokenizer_cfg)
-        tokenizer = build_tokenizer(tokenizer_cfg)
+        tokenizer = neox_args.tokenizer
 
-        train_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
-        cfg['dataset']['split'] = "validation"
-        valid_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
-        cfg['dataset']['split'] = "test"
-        test_dataloader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
+        train_dataloader = build_interleaved_dataloader(train_dataset_cfg, tokenizer, device_batch_size)
+        train_dataset_cfg['dataset']['split'] = "validation"
+        valid_dataloader = build_interleaved_dataloader(validation_dataset_cfg, tokenizer, device_batch_size)
+        validation_dataset_cfg['dataset']['split'] = "test"
+        test_dataloader = build_interleaved_dataloader(test_dataset_cfg, tokenizer, device_batch_size)
 
         # Flags to know if we need to do training/validation/testing.
         do_train = train_dataloader is not None and neox_args.train_iters > 0
