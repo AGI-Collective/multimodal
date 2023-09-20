@@ -4,9 +4,9 @@ from loralib.layers import Linear as LoraLinear
 from loralib.layers import MergedLinear as MergedLoraLinear
 from loralib.layers import Conv2d as LoraConv2d
 
-def add_lora(self, model):
+def add_lora(model):
     for child_name, child in model.named_children():
-        if isinstance(child, nn.Linear) and child.requires_grad == False:
+        if isinstance(child, nn.Linear) and child.weight.requires_grad == False:
             weight = child.weight
             bias = child.bias
             if child_name == 'qkv':
@@ -28,12 +28,12 @@ def add_lora(self, model):
             new.dilation = child.dilation
             setattr(model, child_name, new)
         else:
-            self.add_lora(child)
+            add_lora(child)
 
-def recursive_freeze_unfreeze(self, model, param_types, freeze=True):
+def recursive_freeze_unfreeze(model, param_types, freeze=True):
     for child_name, child in model.named_children():
         child_class_name = child.__class__.__name__
         if str(child_class_name) in param_types:
             child.requires_grad = not freeze
         else:
-            self.recursive_freeze_unfreeze(child, param_types, freeze)
+            recursive_freeze_unfreeze(child, param_types, freeze)

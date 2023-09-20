@@ -24,7 +24,7 @@ class DinoWrapper(nn.Module):
         for child_name, child in list(self.encoder.named_modules())[-num_layers_to_unfreeze:]:
             child.requires_grad_(True)
         # Unfreeze LayerNorm
-        recursive_freeze_unfreeze(self.encoder, ['LayerNorm'], freeze=False)
+        recursive_freeze_unfreeze(self.encoder, param_types=['LayerNorm'], freeze=False)
         # What about cls token? TODO
     
     def prepare_encoder(self):
@@ -42,7 +42,12 @@ class DinoWrapper(nn.Module):
             c=number of channels, h=height, w=width
         '''
         b, t, c, h, w = x.shape 
-        embeddings = self.encoder(x) # B, N_E, E
+        if "vision" in self.config.arch:
+            embeddings = self.encoder(x) # B, N_E, E
+        else:
+            x = rearrange(x, "b t c h w -> (b t) c h w")
+            embeddings = self.encoder(x) # B*T, N_E, E
+            embeddings = rearrange(embeddings, "(b t) n_e e -> b (t n_e) e", b=b, t=t)
         return embeddings
 
 
@@ -70,7 +75,7 @@ def get_vision_encoder(
     """
     if "vit" in name:
         vit_kwargs = dict(
-            img_size=args.global_crops_size,
+            img_size=args.img_size,
             patch_size=args.patch_size,
             ffn_layer=args.ffn_layer,
             block_chunks=args.block_chunks,
