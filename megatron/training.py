@@ -487,13 +487,66 @@ def get_model(neox_args, use_cache=False):
     else:
         raise ValueError("Must be using deepspeed to run neox")
 
+def get_params_for_weight_decay_optimization_local(module, neox_args):
+    """Divide params into with-weight-decay and without-weight-decay groups.
+    Layernorms and biases will have no weight decay but the rest will.
+    """
+    weight_decay_params = {"params": []}
+    no_weight_decay_params = {"params": [], "weight_decay": 0.0}
+
+    #We are going to collect all of our new parameters here instead, and check for them in the next part.
+
+    image_prefix = {"params": [], "lr":1}
+    adapters = {"params": [], "lr":8e-7}
+    
+    for name, module_ in module.named_modules():
+        #Check the name(s) here..
+
+        print(name)
+        if "image_prefix" in name:
+            image_prefix["params"].extend([p for p in list(module_._parameters.values()) if p is not None])
+        elif "adapter" in name:#Should work, please check
+            adapters["params"].extend([p for p in list(module_._parameters.values()) if p is not None])
+        elif any(
+            [
+                isinstance(module_, LayerNorm),
+                isinstance(module_, RMSNorm),
+                isinstance(module_, ScaleNorm),
+            ]
+        ) or (
+            neox_args.weight_decay == 0.0
+        ):  # also include all parameters here if no weight decay is being done
+            no_weight_decay_params["params"].extend(
+                [p for p in list(module_._parameters.values()) if p is not None]
+            )
+        else:
+            weight_decay_params["params"].extend(
+                [
+                    p
+                    for n, p in list(module_._parameters.items())
+                    if p is not None and n != "bias"
+                ]
+            )
+            no_weight_decay_params["params"].extend(
+                [
+                    p
+                    for n, p in list(module_._parameters.items())
+                    if p is not None and n == "bias"
+                ]
+            )
+    if neox_args.weight_decay == 0.0:
+        # only return a single param group
+        # with onebitadam, we want to minimize the calls to compressed_allreduce. Every param group calls it once.
+        # to avoid this, only use a single param group when weight decay is off.
+        return [no_weight_decay_params]
+    return weight_decay_params, no_weight_decay_params, image_prefix, adapters
 
 def get_optimizer(model, neox_args):
     """Set up the optimizer."""
     if neox_args.no_load_optim:
         return None, None
     # Build parameter groups (weight decay and non-decay).
-    param_groups = get_params_for_weight_decay_optimization(model, neox_args)
+    param_groups = get_params_for_weight_decay_optimization_local(model, neox_args)#Modified to use local copy
     print_rank_0(
         f'Configuring Optimizer type: {neox_args.optimizer_type} with params: {neox_args.optimizer["params"]}'
     )
