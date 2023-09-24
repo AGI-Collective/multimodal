@@ -41,7 +41,7 @@ from megatron import print_rank_0, mpu
 from megatron.model import (
     GPT2ModelPipe,
     SoftEmbedding,
-    get_params_for_weight_decay_optimization,
+    get_params_groups,
     add_adapters
 )
 from megatron.checkpointing import load_checkpoint, save_checkpoint
@@ -493,7 +493,7 @@ def get_optimizer(model, neox_args):
     if neox_args.no_load_optim:
         return None, None
     # Build parameter groups (weight decay and non-decay).
-    param_groups = get_params_for_weight_decay_optimization(model, neox_args)
+    param_groups = get_params_groups(model, neox_args)
     print_rank_0(
         f'Configuring Optimizer type: {neox_args.optimizer_type} with params: {neox_args.optimizer["params"]}'
     )
