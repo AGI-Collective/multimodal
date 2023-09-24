@@ -723,7 +723,16 @@ class NeoXArgsTokenizer(NeoXArgsTemplate):
     """
     tokenizer object loaded into memory and accessible by other functions
     """
+    
+    finetune_groups_key_words = ['image_prefix']
+    """
+    parameter will be putted into fintune groups as long as its name contain one of these keywords
+    """
 
+    finetune_factor = 1/400
+    """
+    control the learning rate of fintuned groups, whose real_lr=lr*finetune_factor
+    """
 
 @dataclass
 class NeoXArgsTraining(NeoXArgsTemplate):

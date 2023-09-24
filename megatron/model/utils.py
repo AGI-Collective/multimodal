@@ -60,10 +60,6 @@ def get_params_groups(module, neox_args):
     Real lr of finetune groups is lr * finetune_factor
     Layernorms and biases will have no weight decay but the rest will.
     """
-    # TODO hardcode for now, need to modify the neox_argment class to make it general
-    neox_args.finetune_groups_key_words = ['image_prefix']
-    neox_args.finetune_factor = 1/400
-
     finetune_weight_decay_params = {"params": [], "finetune_factor": neox_args.finetune_factor}
     finetune_no_weight_decay_params = {"params": [], "finetune_factor": neox_args.finetune_factor, "weight_decay": 0.0}
     pretrain_weight_decay_params = {"params": []}
