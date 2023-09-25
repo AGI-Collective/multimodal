@@ -16,17 +16,20 @@
   ],
   
   "tokenizer-type": "HFTokenizer",
-  "vocab-file": "/gpfs/alpine/csc499/scratch/kublaikhan1/20B_tokenizer.json",
+  "vocab-file": "/gpfs/alpine/csc499/scratch/alexisroger/neox/multimodal/tokenizer.json",
 
-  "save": "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/checkpoints/magma_410M_testrun_0-lora-location-6",
+  "save": "/gpfs/alpine/csc499/scratch/alexisroger/neox/multimodal/models/magma_410M_testrun5_lora",
+  # "save": "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/checkpoints/magma_410M_testrun_0-lora-location-6",
+  "load": "/gpfs/alpine/csc499/proj-shared/edwin_runs/magma_410M_testrun05",
+  #"load": "/gpfs/alpine/csc499/proj-shared/kublaikhan1/magma_410M_testrun_0-lora-location-6/",
   #"load" : "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/checkpoints/magma_410M_testrun_0-lora-location-0",
-  "load": "/gpfs/alpine/csc499/proj-shared/pythia_magma_checkpoints/mp1_pp1/pythia",
+  # "load": "/gpfs/alpine/csc499/proj-shared/pythia_magma_checkpoints/mp1_pp1/pythia",
   # "load": "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/checkpoints/magma_410M_testrun12",
   "load_clip": "/gpfs/alpine/csc499/proj-shared/magma/models/clip",
   "checkpoint_validation_with_forward_pass": False,
 
-  "tensorboard-dir": "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/tensorboard/magma_410M_testrun12-6",
-  "log-dir": "/gpfs/alpine/csc499/scratch/kublaikhan1/magma/gpt-neox/logs/magma_410M_testrun_0-adapter-lora-location-6",
+  "tensorboard-dir": "/gpfs/alpine/csc499/scratch/alexisroger/neox/multimodal/tensorboard/magma_410M_testrun5_lora",
+  "log-dir": "/gpfs/alpine/csc499/scratch/alexisroger/neox/multimodal/logs/magma_410M_testrun5_lora",
   "use_wandb": False,
   "wandb_host": "https://api.wandb.ai",
   "wandb_project": "magma_410M_testrun9",
@@ -48,7 +51,7 @@
   
   # LLAMA Config
   # batch / data settings
-  "train_batch_size": 2208,
+  # "train_batch_size": 2208, ###
   "train_micro_batch_size_per_gpu": 4,
   "data-impl": "mmap",
   "split": "949,50,1",

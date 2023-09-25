@@ -607,7 +607,11 @@ def generate_samples_input_from_file(
         "generate_samples_input_from_file() loading input from {}".format(input_file)
     )
     with open(input_file, "r", encoding="utf-8") as f:
-        prompts =[json.loads(l) for l in f.readlines()]
+        prompts = [json.loads(l) for l in f.readlines()]
+        # prompts = []
+        # for l in f.readlines():
+            # print(l)
+            # prompts.append(json.loads(l))
     image_paths = [line['image'] for line in prompts] 
     texts = [line['text'] for line in prompts] 
 

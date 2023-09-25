@@ -2,10 +2,10 @@
 # Make sure `load` is specified somewhere else
 {
   # Text gen type: `input-file`, `unconditional` or `interactive`
-  "text-gen-type": "unconditional",
+  "text-gen-type": "input-file",
 
   # Params for all
-  "maximum_tokens": 102,
+  "maximum_tokens": 16,
   "prompt_end": "\n",
   "temperature": 1.0,
   "top_p": 0.0,
@@ -13,9 +13,9 @@
   "recompute": false,
 
   # `unconditional`: samples
-  "num-samples": 10,
+  "num-samples": 1,
 
   # input/output file
-  "sample-input-file": "sample_input.txt",
-  "sample-output-file": "sample_output.txt",
+  "sample-input-file": "prompts_for_summit.txt",
+  "sample-output-file": "prompts_for_summit_output_lora_edu_05.txt",
 }
