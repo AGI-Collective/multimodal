@@ -1133,11 +1133,12 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     """ 
 
     finetune_groups_key_words = ['image_prefix']
+    #TODO add data type to make it editable in the config, hardcode image_prefix for now.
     """
     parameter will be putted into fintune groups as long as its name contain one of these keywords
     """
 
-    finetune_factor = 1/400
+    finetune_factor:float = 1/400
     """
     control the learning rate of fintuned groups, whose real_lr=lr*finetune_factor
     """
