@@ -66,7 +66,7 @@ def get_params_groups(module, neox_args):
     pretrain_no_weight_decay_params = {"params": [], "weight_decay": 0.0}
 
     for name, module_ in module.named_modules():
-        # Put module into fintune group if name contains any of finetune_groups_key_words
+        # Grammar Sugar for putting module into fintune group if name contains any of finetune_groups_key_words
         if sum([kw in name for kw in neox_args.finetune_groups_key_words]):
             finetune_weight_decay_params, finetune_no_weight_decay_params = update_params_for_weight_decay(
                 module_, finetune_weight_decay_params, finetune_no_weight_decay_params,neox_args.weight_decay 
