@@ -1132,6 +1132,17 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Resample dataset with different weights for each dataset. eg 1::1 , 1::2
     """ 
 
+    finetune_groups_key_words = ['image_prefix']
+    #TODO add data type to make it editable in the config, hardcode image_prefix for now.
+    """
+    parameter will be putted into fintune groups as long as its name contain one of these keywords
+    """
+
+    finetune_factor:float = 1/400
+    """
+    control the learning rate of fintuned groups, whose real_lr=lr*finetune_factor
+    """
+
 @dataclass
 class NeoXArgsTextgen(NeoXArgsTemplate):
     """

@@ -93,6 +93,8 @@ class AnnealingLR(object):
         self.num_iters = step_num
         new_lr = self.get_lr()
         for group in self.optimizer.param_groups:
+            if "finetune_factor" in group:
+                group["lr"] = new_lr * group['finetune_factor'] 
             if self.use_mup and "width_mult" in group:
                 group["lr"] = new_lr / group["width_mult"]
             else:

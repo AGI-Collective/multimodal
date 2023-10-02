@@ -21,49 +21,67 @@ import torch
 from megatron.model.norms import LayerNorm, RMSNorm, ScaleNorm
 from megatron.model.fused_softmax import SoftmaxFusionTypes
 from types import GeneratorType
-import torch.distributed as dist
 
 
-def get_params_for_weight_decay_optimization(module, neox_args):
-    """Divide params into with-weight-decay and without-weight-decay groups.
+def update_params_for_weight_decay(module_:torch.nn.Module,weight_decay_groups:dict, no_weight_decay_groups:dict, weight_decay:float):
+    """Update the w/wo params groups with module
+    Layernorms and biases will have no weight decay but the rest will."""
+    if any(
+        [
+            isinstance(module_, LayerNorm),
+            isinstance(module_, RMSNorm),
+            isinstance(module_, ScaleNorm),
+        ]
+    ) or (
+        weight_decay == 0.0
+    ):  # also include all parameters here if no weight decay is being done
+        no_weight_decay_groups["params"].extend(
+            [p for p in list(module_._parameters.values()) if p is not None]
+        )
+    else:
+        weight_decay_groups["params"].extend(
+            [
+                p
+                for n, p in list(module_._parameters.items())
+                if p is not None and n != "bias"
+            ]
+        )
+        no_weight_decay_groups["params"].extend(
+            [
+                p
+                for n, p in list(module_._parameters.items())
+                if p is not None and n == "bias"
+            ]
+        )
+    return weight_decay_groups, no_weight_decay_groups
+
+def get_params_groups(module, neox_args):
+    """Divide params into four groups depending on w/wo weight_decay and finetuned/pretrained
+    Real lr of finetune groups is lr * finetune_factor
     Layernorms and biases will have no weight decay but the rest will.
     """
-    weight_decay_params = {"params": []}
-    no_weight_decay_params = {"params": [], "weight_decay": 0.0}
-    for module_ in module.modules():
-        if any(
-            [
-                isinstance(module_, LayerNorm),
-                isinstance(module_, RMSNorm),
-                isinstance(module_, ScaleNorm),
-            ]
-        ) or (
-            neox_args.weight_decay == 0.0
-        ):  # also include all parameters here if no weight decay is being done
-            no_weight_decay_params["params"].extend(
-                [p for p in list(module_._parameters.values()) if p is not None]
+    finetune_weight_decay_params = {"params": [], "finetune_factor": neox_args.finetune_factor}
+    finetune_no_weight_decay_params = {"params": [], "finetune_factor": neox_args.finetune_factor, "weight_decay": 0.0}
+    pretrain_weight_decay_params = {"params": []}
+    pretrain_no_weight_decay_params = {"params": [], "weight_decay": 0.0}
+
+    for name, module_ in module.named_modules():
+        # Grammar Sugar for putting module into fintune group if name contains any of finetune_groups_key_words
+        if sum([kw in name for kw in neox_args.finetune_groups_key_words]):
+            finetune_weight_decay_params, finetune_no_weight_decay_params = update_params_for_weight_decay(
+                module_, finetune_weight_decay_params, finetune_no_weight_decay_params,neox_args.weight_decay 
             )
         else:
-            weight_decay_params["params"].extend(
-                [
-                    p
-                    for n, p in list(module_._parameters.items())
-                    if p is not None and n != "bias"
-                ]
+            pretrain_weight_decay_params, pretrain_no_weight_decay_params = update_params_for_weight_decay(
+                module_, pretrain_weight_decay_params, pretrain_no_weight_decay_params,neox_args.weight_decay
             )
-            no_weight_decay_params["params"].extend(
-                [
-                    p
-                    for n, p in list(module_._parameters.items())
-                    if p is not None and n == "bias"
-                ]
-            )
+
     if neox_args.weight_decay == 0.0:
-        # only return a single param group
+        # only return minimal param groups
         # with onebitadam, we want to minimize the calls to compressed_allreduce. Every param group calls it once.
-        # to avoid this, only use a single param group when weight decay is off.
-        return [no_weight_decay_params]
-    return weight_decay_params, no_weight_decay_params
+        return [finetune_no_weight_decay_params, pretrain_no_weight_decay_params]
+
+    return [finetune_weight_decay_params, finetune_no_weight_decay_params, pretrain_weight_decay_params, pretrain_no_weight_decay_params]
 
 
 def exists(x):
