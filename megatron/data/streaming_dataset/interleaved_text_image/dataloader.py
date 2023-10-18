@@ -7,17 +7,51 @@ import os
 from itertools import islice
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
+from PIL import Image
+import pickle
 import numpy as np
 import torch
 import transformers
 from omegaconf import DictConfig
 from omegaconf import OmegaConf as om
-from streaming import Stream, StreamingDataset
+from streaming import Stream, StreamingDataset, StreamingDataLoader
 from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizerBase
 import argparse
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoImageProcessor, AutoModel
 
+from streaming.base.format.mds.encodings import Encoding, _encodings
+
+class PickleEncoding(Encoding):
+    def encode(self, data: List[Image.Image]) -> bytes:
+        return pickle.dumps(data)
+
+    def decode(self, data: bytes) -> np.ndarray:
+        data = pickle.loads(data)
+        # Convert PIL Images to numpy arrays
+        data = map(lambda x: np.array(x), data)
+        return np.stack(list(data))
+
+_encodings['pickleencoding'] = PickleEncoding
+
+class simple_encoding(Encoding):
+    def encode(self, data: List[Image.Image]) -> bytes:
+        # Read all images into numpy array
+        data = map(lambda x: np.array(x), data)
+        data = np.stack(list(data))
+        assert data.shape == (len(data), 256, 256, 3), f'Expected shape (N, 256, 256, 3), got {data.shape}'
+        return data.tobytes()
+    
+    def decode(self, data: bytes) -> np.ndarray:
+        # convert bytes to numpy array
+        data = np.frombuffer(data, dtype=np.uint8)
+        # print(data.shape, data.reshape(-1, 256, 256, 3).shape)
+        # reshape to original shape
+        data = data.reshape(-1, 256, 256, 3)
+        return data
+
+_encodings['simple_encoding'] = simple_encoding
 
 def build_tokenizer(om_tokenizer_config: DictConfig) -> PreTrainedTokenizerBase:
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
@@ -157,6 +191,7 @@ class StreamingInterleavedDataset(StreamingDataset):
         )
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
+        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample: Mapping):
@@ -191,9 +226,11 @@ class StreamingInterleavedDataset(StreamingDataset):
             raise RuntimeError(
                 'StreamingTextDataset needs samples to have a `text` or `tokens` column'
             )
-        vision_input = torch.from_numpy(sample.get('vision_input', None).copy())
-        multimodal_position_ids = torch.from_numpy(sample.get('multimodal_position_ids', None).copy())
-        labels = torch.from_numpy(sample.get('labels', None).copy()) 
+        vision_input = np.frombuffer(sample.get('images', None), dtype=np.uint8).copy().reshape(-1, 256, 256, 3)
+        vision_input = self.processor(vision_input, return_tensors="pt")
+        vision_input = vision_input["pixel_values"].to(torch.int64).unsqueeze(1) # TODO: Fix for num_frames > 1
+        multimodal_position_ids = torch.from_numpy(np.frombuffer(sample.get('multimodal_position_ids', None), dtype=np.int64).copy()).reshape(2, -1)
+        labels = torch.from_numpy(np.frombuffer(sample.get('labels', None), dtype=np.int64).copy()).reshape(2, -1) 
         return (token_sample, vision_input, multimodal_position_ids, labels)
 
 
@@ -237,7 +274,6 @@ class PaddedCollateWrapper:
         if self.take_transpose:
             # Apply transpose to each example in batch parallely using map function
             examples = list(map(lambda x: x.transpose(0, 1), examples))
-
         batch = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True, padding_value=self.pad_token_id)
 
         if self.take_transpose:
@@ -286,11 +322,11 @@ def build_interleaved_dataloader(
 
     text_collate_fn = TextNeoXCollateWrapper(text_collate_fn)
     
-    vision_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (num_vision, H, W, C)
+    vision_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (timesteps, num_vision, H, W, C)
 
     multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
     
-    label_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (num_modalities, max_seq_length)
+    label_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
 
     collate_fn = MultimodalCollateWrapper(text_collator=text_collate_fn, 
                                           vision_collator=vision_collate_fn, 
@@ -299,7 +335,7 @@ def build_interleaved_dataloader(
                                           multimodal_position_ids_collator=multimodal_position_ids_collate_fn, 
                                           label_collator=label_collate_fn)
     
-    return DataLoader(
+    return StreamingDataLoader(
         dataset,
         collate_fn=collate_fn,
         batch_size=device_batch_size,
