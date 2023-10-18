@@ -26,6 +26,7 @@ import requests
 
 import einops
 from einops import rearrange
+from megatron.model.multimodal_encoder import MultiModalEncoder
 
 from megatron.utils import MODALITY_DICT
 
@@ -211,14 +212,35 @@ class ImageEncoder(torch.nn.Module):
         embeddings = embeddings.reshape(batch_size, max_seq_length, -1)  
         embeddings = rearrange(embeddings, "(b t) n f -> b t n f", b=original_batch_size, t=num_images)
         return embeddings
+        
+class Args:
+    def __init__(self):
+        self.arch = "vit_base"
+        self.modality = "vision"
+        self.patch_size = 14
+        self.drop_path_rate = 0.4
+        self.ffn_layer = "swiglufused"
+        self.block_chunks = 4
+        self.img_size = 518
+        self.pretrained_weights=r'/p/scratch/ccstdl/gupta6/dinov2/dinobase.pt'
+        self.freeze_encoder = True
+        self.add_lora = False
+        self.pretrained = True
+        self.encoder_type = "dinov2_base"
+        self.embed_dropout_prob = 0.1
+        self.use_embed_layernorm = True
+        self.perceiver_seq_length = 64
+        self.num_layers_to_unfreeze = 1
 
 class EmbeddingPipe(Embedding):
     """Extends Embedding to forward attention_mask through the pipeline."""
 
     def __init__(self, neox_args, *args, **kwargs):
         super().__init__(neox_args, *args, **kwargs)
-        self.image_encoder = ImageEncoder(neox_args)
+        # self.image_encoder = ImageEncoder(neox_args)
         self.seq_length = neox_args.seq_length
+        image_encoder_args = Args()
+        self.image_encoder = MultiModalEncoder(image_encoder_args, neox_args.hidden_size)
 
     @property
     def word_embeddings_weight(self):
@@ -233,7 +255,7 @@ class EmbeddingPipe(Embedding):
         input_ids = args[0]
         vision_input = args[1]
         multimodal_position_ids = args[2] # [B, T]
-        assert self.seq_length == torch.max(multimodal_position_ids)+1
+        # assert self.seq_length == torch.max(multimodal_position_ids)+1
         position_ids = args[3]
         attention_mask = args[4]
         

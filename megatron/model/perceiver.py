@@ -40,9 +40,9 @@ class PerceiverAttention(nn.Module):
         """
         Args:
             x (torch.Tensor): image features
-                shape (b, T, n1, D)
+                shape (b*t, n1, D)
             latent (torch.Tensor): latent features
-                shape (b, T, n2, D)
+                shape (b*t, n2, D)
         """
         x = self.norm_media(x)
         latents = self.norm_latents(latents)
@@ -52,7 +52,7 @@ class PerceiverAttention(nn.Module):
         q = self.to_q(latents)
         kv_input = torch.cat((x, latents), dim=-2)
         k, v = self.to_kv(kv_input).chunk(2, dim=-1)
-        q, k, v = rearrange_many((q, k, v), "b t n (h d) -> b h t n d", h=h)
+        q, k, v = rearrange_many((q, k, v), "b n (h d) -> b h n d", h=h)
         q = q * self.scale
 
         # attention
@@ -61,7 +61,7 @@ class PerceiverAttention(nn.Module):
         attn = sim.softmax(dim=-1)
 
         out = einsum("... i j, ... j d -> ... i d", attn, v)
-        out = rearrange(out, "b h t n d -> b t n (h d)", h=h)
+        out = rearrange(out, "b h n d -> b n (h d)", h=h)
         return self.to_out(out)
 
 
@@ -80,12 +80,8 @@ class PerceiverResampler(nn.Module):
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
-        self.frame_embs = (
-            nn.Parameter(torch.randn(max_num_frames, dim))
-            if exists(max_num_frames)
-            else None
-        )
-        self.media_time_embs = (
+        
+        self.time_embeds = (
             nn.Parameter(torch.randn(max_num_media, 1, dim))
             if exists(max_num_media)
             else None
@@ -108,24 +104,17 @@ class PerceiverResampler(nn.Module):
         """
         Args:
             x (torch.Tensor): image features
-                shape (b, T, F, v, D)
+                shape (b*t, n, d)
         Returns:
-            shape (b, T, n, D) where n is self.num_latents
+            shape (b*t, l, d) where l is self.num_latents
         """
-        b, T, F, v = x.shape[:4]
+        b, n, d = x.shape
 
-        # frame and media time embeddings
-        if exists(self.frame_embs):
-            frame_embs = repeat(self.frame_embs[:F], "F d -> b T F v d", b=b, T=T, v=v)
-            x = x + frame_embs
-        x = rearrange(
-            x, "b T F v d -> b T (F v) d"
-        )  # flatten the frame and spatial dimensions
-        if exists(self.media_time_embs):
-            x = x + self.media_time_embs[:T]
+        if exists(self.time_embeds):
+            x = x + self.time_embeds[:n]
 
         # blocks
-        latents = repeat(self.latents, "n d -> b T n d", b=b, T=T)
+        latents = repeat(self.latents, "l d -> b l d", b=b)
         for attn, ff in self.layers:
             latents = attn(x, latents) + latents
             latents = ff(latents) + latents

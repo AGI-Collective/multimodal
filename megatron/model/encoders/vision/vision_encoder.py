@@ -9,6 +9,8 @@ from ..utils import recursive_freeze_unfreeze
 from .dinov2.models import vision_transformer as vits
 from .dinov2 import layers
 
+from transformers import AutoImageProcessor, AutoModel
+
 class DinoWrapper(nn.Module):
     def __init__(self, encoder, config):
         super().__init__()
@@ -49,6 +51,30 @@ class DinoWrapper(nn.Module):
             embeddings = self.encoder(x) # B*T, N_E, E
             embeddings = rearrange(embeddings, "(b t) n_e e -> b (t n_e) e", b=b, t=t)
         return embeddings
+
+    # def forward(self, x):
+    #     '''
+    #     x: (b, t, c, h, w)
+    #     x.shape:
+    #         b=batch size, 
+    #         t=number of frames in each image/video, 
+    #         c=number of channels, h=height, w=width
+    #     '''
+    #     # print(x.shape)
+    #     x = x.squeeze()
+    #     original_device = x.device
+    #     b, t, c, h, w = x.shape 
+    #     if "vision" in self.config.arch:
+    #         embeddings = self.encoder(x) # B, N_E, E
+    #     else:
+    #         x = rearrange(x, "b t c h w -> (b t) c h w")
+    #         # Convert to numpy 
+    #         # x = x.cpu().numpy()
+    #         # x = self.processor(x, return_tensors="pt", padding=True)
+    #         # x = x["pixel_values"].cuda().to(device=original_device)
+    #         embeddings = self.encoder(x) # B*T, N_E, E
+    #         embeddings = rearrange(embeddings, "(b t) n_e e -> b t n_e e", b=b, t=t)
+    #     return embeddings
 
 
 def load_pretrained_weights(model, pretrained_weights, checkpoint_key):

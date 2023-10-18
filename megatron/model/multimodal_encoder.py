@@ -3,8 +3,8 @@ import torch.nn as nn
 from torchtyping import TensorType
 from einops import rearrange
 from .perceiver import PerceiverResampler
-from .encoders.audio_encoders import get_audio_encoder
-from .encoders.vision_encoders import get_vision_encoder
+# from megatron.model.encoders.audio.audio_encoders import get_audio_encoder
+from megatron.model.encoders.vision.vision_encoder import get_vision_encoder
 
 
 ENCODER_OUT_DIMS = {
@@ -44,25 +44,25 @@ class MultiModalEncoder(nn.Module):
         self.config = config
         self.modality = config.modality 
         if self.modality == "vision":
-            self.encoder = get_vision_encoder(config.encoder_name, load_path=config.load_vision_encoder_path)
-        elif self.modality == "audio":
-            self.encoder = get_audio_encoder(config.encoder_name, load_path=config.load_audio_encoder_path)
+            self.encoder = get_vision_encoder(config, config.arch, pretrained=config.pretrained)
+        # elif self.modality == "audio":
+        #     self.encoder = get_audio_encoder(config.encoder_name, load_path=config.load_audio_encoder_path)
         else:
             raise ValueError(f"modality {self.modality} not recognized")
 
         self.encoder_out_dim = ENCODER_OUT_DIMS[
-            self.encoder_type
+            self.config.encoder_type
         ]  # out dim for vision encoder
         self.encoder_seq_len = ENCODER_SEQ_LENS[
-            self.encoder_type
+            self.config.encoder_type
         ]
         self.out_dim = out_dim  # out dim for lm
         self.proj = nn.Linear(self.encoder_out_dim, self.out_dim)
-        self.dropout = nn.Dropout(config.embed_dropout_prob)
-        self.use_layernorm = config.use_embed_layernorm
+        self.dropout = nn.Dropout(self.config.embed_dropout_prob)
+        self.use_layernorm = self.config.use_embed_layernorm
         if self.use_layernorm:
             self.ln = nn.LayerNorm(self.out_dim)
-        self.perceiver = PerceiverResampler(dim=config.encoder_seq_length)
+        self.perceiver = PerceiverResampler(dim=self.encoder_out_dim, num_latents=self.config.perceiver_seq_length)
     
     def forward(
         self, x: TensorType["b", "t", "c", "h", "w"] or TensorType["b", "t", "f", "c", "h", "w"]
@@ -88,14 +88,11 @@ class MultiModalEncoder(nn.Module):
             raise ValueError(f"modality {self.modality} not recognized")
 
         embeddings = self.encoder(x) # (B, T), N_E, E
-        embeddings = rearrange(embeddings, "(b t) n_e e -> b t n_e e", b=B, t=T) # (B, T, N_E, E
-        B, T, N_E, E = embeddings.shape
+        BT, N_E, E = embeddings.shape
         assert N_E == self.encoder_seq_len
-        
-        embeddings = rearrange(embeddings, "b t n_e e -> (b t) n_e e")
         embeddings = self.perceiver(embeddings) # (B*T, N_E_new, E)
 
-        logits = self.proj(logits) # (B*T, N_E_new, E_L)
+        logits = self.proj(embeddings) # (B*T, N_E_new, E_L)
         logits = self.dropout(logits) # (B*T, N_E_new, E_L)
 
         if self.use_layernorm:
