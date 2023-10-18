@@ -23,7 +23,7 @@ def test_dino_image_transformer():
     image = torch.randn(batch_size,num_frames, num_channels, 224, 224)
 
     # Initialize the model
-    model = get_vision_encoder(args,"vit_base",True)
+    model = get_vision_encoder(args,args.arch,True)
     
     # Pass the video through the model
     output = model(image)
@@ -39,7 +39,7 @@ def test_dino_image_frozen_transformer():
     image = torch.randn(batch_size,num_frames, num_channels, 224, 224)
 
     # Initialize the model
-    model = get_vision_encoder(args,"vit_base",True)
+    model = get_vision_encoder(args,args.arch,True)
     
     # Pass the video through the model
     output = model(image)
@@ -56,7 +56,7 @@ def test_dino_image_frozen_lora_transformer():
     image = torch.randn(batch_size,num_frames, num_channels, 224, 224)
 
     # Initialize the model
-    model = get_vision_encoder(args,"vit_base",True)
+    model = get_vision_encoder(args,args.arch,True)
     
     # Pass the video through the model
     output = model(image)
@@ -81,7 +81,7 @@ def test_dino_video_transformer_basic():
 def main():
     test_dino_image_transformer()
     test_dino_image_frozen_transformer()
-    # test_dino_image_frozen_lora_transformer()
+    test_dino_image_frozen_lora_transformer()
     # test_dino_video_transformer_basic()
     
 if __name__ == "__main__":
