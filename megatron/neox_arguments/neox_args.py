@@ -715,7 +715,7 @@ class NeoXArgsTokenizer(NeoXArgsTemplate):
     """
     tokenizer object loaded into memory and accessible by other functions
     """
-
+    position_pad_id: int = -1
 
 @dataclass
 class NeoXArgsTraining(NeoXArgsTemplate):

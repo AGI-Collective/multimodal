@@ -324,8 +324,9 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         def prepare_config(dataset_config):
             dataset_config['num_workers'] = neox_args.num_workers
             dataset_config['dataset']['max_seq_length'] = neox_args.seq_length
-            dataset_config['dataset']['eos_token_id'] = neox_args.tokenizer.eod_id
             dataset_config['dataset']['remote'] = None # TODO Allow remote datasets
+            dataset_config['dataset']['position_pad_id'] = neox_args.position_pad_id
+            dataset_config['dataset']['pad_token_id'] = neox_args.tokenizer.pad_id
 
         prepare_config(neox_args.train_streaming_data_config)
         prepare_config(neox_args.valid_streaming_data_config)
@@ -340,9 +341,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         tokenizer = neox_args.tokenizer
 
         train_dataloader = build_interleaved_dataloader(train_dataset_cfg, tokenizer, device_batch_size)
-        train_dataset_cfg['dataset']['split'] = "validation"
         valid_dataloader = build_interleaved_dataloader(validation_dataset_cfg, tokenizer, device_batch_size)
-        validation_dataset_cfg['dataset']['split'] = "test"
         test_dataloader = build_interleaved_dataloader(test_dataset_cfg, tokenizer, device_batch_size)
 
         # Flags to know if we need to do training/validation/testing.
