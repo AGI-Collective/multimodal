@@ -22,6 +22,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from transformers import AutoImageProcessor, AutoModel
 
 from streaming.base.format.mds.encodings import Encoding, _encodings
+from einops import rearrange
 
 class PickleEncoding(Encoding):
     def encode(self, data: List[Image.Image]) -> bytes:
@@ -147,6 +148,7 @@ class StreamingInterleavedDataset(StreamingDataset):
                  shuffle_seed: int = 9176,
                  shuffle_block_size: int = 1 << 18,
                  batching_method: str = 'random',
+                 vision_pad_id: int = -100,
                  **kwargs: Any):
 
         group_method = kwargs.pop('group_method', None)
@@ -193,7 +195,7 @@ class StreamingInterleavedDataset(StreamingDataset):
         )
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
-        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+        self.vision_pad_id = vision_pad_id
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample: Mapping):
@@ -232,10 +234,13 @@ class StreamingInterleavedDataset(StreamingDataset):
         is_vision_empty = vision_input.shape[0] == 0
         if is_vision_empty:
             vision_input = np.zeros((1, 256, 256, 3), dtype=np.uint8)
-        vision_input = self.processor(vision_input, return_tensors="pt")
-        vision_input = vision_input["pixel_values"].to(torch.int64).unsqueeze(1) # TODO: Fix for num_frames > 1
+        
+        vision_input = torch.from_numpy(vision_input).to(torch.int64)
+        vision_input = vision_input.unsqueeze(1) # TODO: Fix for num_frames > 1
+        vision_input = rearrange(vision_input, "t f h w c -> t f c h w")
+        
         if is_vision_empty:
-            vision_input = torch.ones_like(vision_input) * -1 # TODO: Fix value to use padding value instead
+            vision_input = torch.ones_like(vision_input) * self.vision_pad_id
         multimodal_position_ids = torch.from_numpy(np.frombuffer(sample.get('multimodal_position_ids', None), dtype=np.int64).copy()).reshape(2, -1)
         labels = torch.from_numpy(np.frombuffer(sample.get('labels', None), dtype=np.int64).copy()).reshape(2, -1) 
         return (token_sample, vision_input, multimodal_position_ids, labels)
@@ -304,8 +309,9 @@ def build_interleaved_dataloader(
     streams_dict = cfg.dataset.pop('streams', None)
     mlm_probability = cfg.dataset.pop('mlm_probability', None)
     position_pad_id = cfg.dataset.pop('position_pad_id', None)
-    pad_token_id = cfg.dataset.pop('pad_token_id', None)
-    
+    pad_token_id = tokenizer.pad_token_id
+    vision_pad_id = cfg.dataset.pop('vision_pad_id', None)
+
     # build streams
     streams = None
     if streams_dict is not None:
@@ -319,6 +325,7 @@ def build_interleaved_dataloader(
     dataset = StreamingInterleavedDataset(
         tokenizer=tokenizer,
         streams=streams,
+        vision_pad_id=vision_pad_id,
         **cfg.dataset,
     )
 
@@ -329,7 +336,7 @@ def build_interleaved_dataloader(
 
     text_collate_fn = TextNeoXCollateWrapper(text_collate_fn)
     
-    vision_collate_fn = PaddedCollateWrapper(pad_token_id=pad_token_id) # Each sample: (timesteps, num_vision, H, W, C)
+    vision_collate_fn = PaddedCollateWrapper(pad_token_id=vision_pad_id) # Each sample: (timesteps, num_vision, H, W, C)
 
     multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=position_pad_id, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
     

@@ -238,9 +238,10 @@ class EmbeddingPipe(Embedding):
     def __init__(self, neox_args, *args, **kwargs):
         super().__init__(neox_args, *args, **kwargs)
         # self.image_encoder = ImageEncoder(neox_args)
+        self.neox_args = neox_args  
         self.seq_length = neox_args.seq_length
-        image_encoder_args = Args()
-        self.image_encoder = MultiModalEncoder(image_encoder_args, neox_args.hidden_size)
+        self.image_encoder_args = Args()
+        self.image_encoder = MultiModalEncoder(self.image_encoder_args, neox_args.hidden_size)
 
     @property
     def word_embeddings_weight(self):
@@ -261,7 +262,12 @@ class EmbeddingPipe(Embedding):
         
         word_embeddings = super().forward(input_ids, position_ids) # [B, T, E]
         # Vision Input is [B, T, F, C, H, W]
-        image_embeddings = self.image_encoder(vision_input) # [B, T, N, E] where N=1 for now 
+        # print("Inside embedding", vision_input)
+        if torch.all(vision_input == self.neox_args.vision_pad_id):
+            image_embeddings = torch.zeros((vision_input.shape[0], vision_input.shape[1], self.image_encoder_args.perceiver_seq_length, self.neox_args.hidden_size), dtype=word_embeddings.dtype, device=word_embeddings.device)
+        else:
+            image_embeddings = self.image_encoder(vision_input) # [B, T, N, E] where N=1 for now 
+        
         image_embeddings = rearrange(image_embeddings, "b t n e -> b (t n) e") # [B, T*N, E]
         
         # Concatenate the embeddings

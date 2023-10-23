@@ -292,8 +292,8 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     max_text_length = text_input.shape[1]
     text_positions = multimodal_position_ids[:, MODALITY_DICT['text'], :max_text_length]
     text_labels = labels[:, MODALITY_DICT['text'], :max_text_length]
-    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['text'], max_text_length:] == -1)
-    assert torch.all(labels[:, MODALITY_DICT['text'], max_text_length:] == -1)
+    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['text'], max_text_length:] == neox_args.position_pad_id)
+    assert torch.all(labels[:, MODALITY_DICT['text'], max_text_length:] == tokenizer.pad_id)
     text_input_info = {
         "input": text_input,
         "labels": text_labels,
@@ -302,12 +302,12 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     }
 
     # Unpack vision_input and get padded vision length
-    vision_input = data_b["vision_input"].half().contiguous()
+    vision_input = data_b["vision_input"]
     max_vision_length = vision_input.shape[1]
     vision_positions = multimodal_position_ids[:, MODALITY_DICT['vision'], :max_vision_length]
     vision_labels = labels[:, MODALITY_DICT['vision'], :max_vision_length]
-    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['vision'], max_vision_length:] == -1)
-    assert torch.all(labels[:, MODALITY_DICT['vision'], max_vision_length:] == -1)
+    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['vision'], max_vision_length:] == neox_args.position_pad_id)
+    assert torch.all(labels[:, MODALITY_DICT['vision'], max_vision_length:] == tokenizer.pad_id)
     vision_input_info = {
         "input": vision_input,
         "labels": vision_labels,

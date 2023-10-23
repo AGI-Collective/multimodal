@@ -326,7 +326,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
             dataset_config['dataset']['max_seq_length'] = neox_args.seq_length
             dataset_config['dataset']['remote'] = None # TODO Allow remote datasets
             dataset_config['dataset']['position_pad_id'] = neox_args.position_pad_id
-            dataset_config['dataset']['pad_token_id'] = neox_args.tokenizer.pad_id
+            dataset_config['dataset']['vision_pad_id'] = neox_args.vision_pad_id
 
         prepare_config(neox_args.train_streaming_data_config)
         prepare_config(neox_args.valid_streaming_data_config)
