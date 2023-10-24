@@ -32,6 +32,10 @@ from megatron.data.streaming_dataset.interleaved_text_image.dataloader import bu
 
 from streaming import Stream, StreamingDataset
 from omegaconf import OmegaConf as om
+import pickle as pkl
+
+import os
+
 def make_data_loader(dataset, neox_args):
     """Build dataloader given an input dataset."""
     if dataset is None:
@@ -367,25 +371,39 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
     neox_args.do_train = flags[0].item()
     neox_args.do_valid = flags[1].item()
     neox_args.do_test = flags[2].item()
-    
-    
-    # Build iterators.
+
+    # Shift the start iterations.
     if train_dataloader is not None:
-        train_data_iterator = iter(train_dataloader)
-    else:
-        train_data_iterator = None
-
+        train_state_dict_path = neox_args.train_streaming_data_config['state_dict_path']
+        if os.path.exists(train_state_dict_path):
+            train_state_dict = pkl.load(open(train_state_dict_path, 'rb'))
+            print(train_state_dict)
+            train_dataloader.load_state_dict(train_state_dict)
+            # Print all the key value pairs of the state dict
+            for k, v in train_state_dict.items():
+                print_rank_0(f"Loaded {k} with value {v}")
+        else:
+            print_rank_0(
+                "setting training data start iteration to {}".format(
+                    0
+                )
+            )
+        
     if valid_dataloader is not None:
-        valid_data_iterator = iter(valid_dataloader)
-    else:
-        valid_data_iterator = None
+        valid_state_dict_path = neox_args.valid_streaming_data_config['state_dict_path']
+        if os.path.exists(valid_state_dict_path):    
+            valid_state_dict = pkl.load(open(valid_state_dict_path, 'rb'))
+            valid_dataloader.load_state_dict(valid_state_dict)
+            for k, v in train_state_dict.items():
+                print_rank_0(f"Loaded {k} with value {v}")
+        else:
+            print_rank_0(
+                "setting validation data start iteration to {}".format(
+                    0
+                )
+            )
 
-    if test_dataloader is not None:
-        test_data_iterator = iter(test_dataloader)
-    else:
-        test_data_iterator = None
-
-    return train_data_iterator, valid_data_iterator, test_data_iterator
+    return train_dataloader, valid_dataloader, test_dataloader
 
 def build_train_valid_test_data_iterators(neox_args):
     """XXX"""
