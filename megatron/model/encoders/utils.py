@@ -20,10 +20,10 @@ def add_lora(model):
         elif isinstance(child, nn.Conv2d):
             weight = child.weight
             bias = child.bias
-            new = LoraConv2d(child.in_channels, child.out_channels, child.kernel_size[0], r = 128, dtype = torch.float32)                     
+            new = LoraConv2d(child.in_channels, child.out_channels, child.kernel_size[0], r = 128, dtype = torch.float32, stride = child.stride)                     
             new.weight = weight
             new.bias = bias
-            new.stride = child.stride
+            # new.stride = child.stride
             new.padding = child.padding
             new.dilation = child.dilation
             setattr(model, child_name, new)
