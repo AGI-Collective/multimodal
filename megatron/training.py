@@ -57,6 +57,7 @@ from megatron.utils import (
 )
 from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
+import pickle as pkl
 
 
 def mup_weights_reinit(neox_args, model):
@@ -198,14 +199,14 @@ def pretrain(neox_args):
     # Data stuff.
     timers("train/valid/test data iterators").start()
     (
-        train_data_iterator,
-        valid_data_iterator,
-        test_data_iterator,
+        train_dataloader,
+        valid_dataloader,
+        test_dataloader,
     ) = build_streaming_train_valid_test_data_iterators(neox_args=neox_args)
     timers("train/valid/test data iterators").stop()
 
     if neox_args.use_mup and neox_args.coord_check:
-        mup_coord_check(neox_args, timers, lr_scheduler, train_data_iterator)
+        mup_coord_check(neox_args, timers, lr_scheduler, iter(train_dataloader) if train_dataloader is not None else None)
 
     # Print setup timing.
     print_rank_0("done with setups ...")
@@ -223,6 +224,9 @@ def pretrain(neox_args):
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
+            pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
+            pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
+            
 
         iteration = train(
             neox_args=neox_args,
@@ -230,8 +234,8 @@ def pretrain(neox_args):
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            train_data_iterator=train_data_iterator,
-            valid_data_iterator=valid_data_iterator,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,
         )
 
     if neox_args.do_valid:
@@ -240,7 +244,7 @@ def pretrain(neox_args):
             neox_args=neox_args,
             prefix=prefix,
             forward_step_func=forward_step,
-            data_iterator=valid_data_iterator,
+            data_iterator=iter(valid_dataloader) if valid_dataloader is not None else None,
             model=model,
             iteration=iteration,
             verbose=False,
@@ -255,6 +259,8 @@ def pretrain(neox_args):
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
         )
+        pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
+        pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
 
     if neox_args.do_test:
         # Run on test data.
@@ -263,7 +269,7 @@ def pretrain(neox_args):
             neox_args=neox_args,
             prefix=prefix,
             forward_step_func=forward_step,
-            data_iterator=test_data_iterator,
+            data_iterator=iter(test_dataloader) if test_dataloader is not None else None,
             model=model,
             iteration=iteration,
             verbose=True,
@@ -819,11 +825,12 @@ def train(
     model,
     optimizer,
     lr_scheduler,
-    train_data_iterator,
-    valid_data_iterator,
+    train_dataloader,
+    valid_dataloader,
 ):
     """Train the model function."""
-
+    train_data_iterator = iter(train_dataloader) if train_dataloader else None
+    valid_data_iterator = iter(valid_dataloader) if valid_dataloader else None
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -889,6 +896,8 @@ def train(
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
+            pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
+            pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
 
         # Evaluation
         if (
