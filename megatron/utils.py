@@ -269,6 +269,7 @@ def get_multimodal_ltor_masks_and_position_ids(
     eod_token,
     bos_token,
     pad_token,
+    position_pad_token_id,
     vision_start_token,
     concat_data=True,
     attn_uses_sequence_id=False,
@@ -295,7 +296,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         shifted_multimodal_position_ids=shifted_multimodal_position_ids,
         eos_token_id=eod_token,
         bos_token_id=bos_token,
-        position_pad_token_id=-1, # TODO, get whatever is used in streaming
+        position_pad_token_id=position_pad_token_id, 
         text_pad_token_id=pad_token,
         concat_data=concat_data,
         attn_uses_sequence_id=attn_uses_sequence_id,

@@ -337,6 +337,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         eod_token=tokenizer.eod_id,
         bos_token=tokenizer.bos_id if hasattr(tokenizer, "bos_id") else None,
         pad_token=tokenizer.pad_id,
+        position_pad_token_id=neox_args.position_pad_id,
         vision_start_token = tokenizer.image_start_id,
         concat_data=neox_args.concat_data,
         attn_uses_sequence_id=neox_args.attn_uses_sequence_id
