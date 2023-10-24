@@ -269,6 +269,7 @@ def get_multimodal_ltor_masks_and_position_ids(
     eod_token,
     bos_token,
     pad_token,
+    vision_start_token,
     concat_data=True,
     attn_uses_sequence_id=False,
 ):
@@ -319,6 +320,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         loss_mask[labels == pad_token] = 0.0
         loss_mask[labels == bos_token] = 0.0
         loss_mask[labels == eod_token] = 0.0
+        loss_mask[labels == vision_start_token] = 0.0
 
     position_ids = torch.arange(input_seq_length, dtype=torch.long, device=labels.device) # FIX THIS #TODO
     position_ids = position_ids.unsqueeze(0).expand(batch_size, input_seq_length)
