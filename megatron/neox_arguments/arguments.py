@@ -685,6 +685,9 @@ class NeoXArgs(*BASE_CLASSES):
             file_prefix = os.path.join(self.log_dir, hostname)
             Tee(file_prefix + "_stdout.txt", err=False)
             Tee(file_prefix + "_stderr.txt", err=True)
+        
+        if self.wandb_dir:
+            os.makedirs(self.wandb_dir, exist_ok=True)
 
     def print(self):
         """Print arguments."""

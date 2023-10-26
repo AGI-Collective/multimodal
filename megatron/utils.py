@@ -384,6 +384,7 @@ def init_wandb(neox_args):
     if neox_args.use_wandb:
         group_name = neox_args.wandb_group
         name = f"{socket.gethostname()}-{local_rank()}" if group_name else None
+        print("Logging wandb to:", neox_args.wandb_dir, flush=True)
         try:
             wandb.init(
                 project=neox_args.wandb_project,
@@ -392,6 +393,7 @@ def init_wandb(neox_args):
                 save_code=False,
                 force=False,
                 entity=neox_args.wandb_team,
+                dir=neox_args.wandb_dir,
             )
         except wandb.UsageError as e:
             neox_args.update_value("use_wandb", False)

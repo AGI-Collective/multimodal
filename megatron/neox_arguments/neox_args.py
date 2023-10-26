@@ -499,6 +499,11 @@ class NeoXArgsLogging(NeoXArgsTemplate):
     git_hash: str = get_git_commit_hash()
     """current git hash of repository"""
 
+    wandb_dir: str = None
+    """
+    Directory to save logs to.
+    """
+
     log_dir: str = None
     """
     Directory to save logs to.
