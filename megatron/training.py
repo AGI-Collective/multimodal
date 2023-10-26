@@ -59,6 +59,27 @@ from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
 import pickle as pkl
 
+import os 
+
+def save_dataloader_checkpoint(checkpoint_path, iteration, dataloader_state_dict):
+    save_checkpoint = False
+    if torch.distributed.is_initialized():
+        if torch.distributed.get_rank() == 0:
+            save_checkpoint = True
+    else:
+        save_checkpoint = True
+
+    if save_checkpoint:
+        if not os.path.isdir(checkpoint_path):  # If the folder does not exist
+            os.makedirs(checkpoint_path)  # Create the folder
+        
+        file_name = os.path.join(checkpoint_path, f'{iteration}_checkpoint.pkl')
+        
+        with open(file_name, 'wb') as file:
+            pkl.dump(dataloader_state_dict, file)
+        
+
+
 
 def mup_weights_reinit(neox_args, model):
     def has_method(o, name):
@@ -224,8 +245,8 @@ def pretrain(neox_args):
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
-            pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
-            pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
             
 
         iteration = train(
@@ -259,8 +280,8 @@ def pretrain(neox_args):
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
         )
-        pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
-        pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
+        save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+        save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
 
     if neox_args.do_test:
         # Run on test data.
@@ -287,7 +308,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     if "labels" in data_b: # This our custom approach
         labels = data_b["labels"].long().contiguous()
         text_input = text_input_.contiguous()
-    else:
+    else: # This is not supported
         labels = text_input_[:, 1:].contiguous()
         text_input = text_input_[:, :-1].contiguous()
 
@@ -896,8 +917,8 @@ def train(
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
-            pkl.dump(train_dataloader.state_dict(), open(neox_args.train_streaming_data_config['state_dict_path'], 'wb'))    
-            pkl.dump(valid_dataloader.state_dict(), open(neox_args.valid_streaming_data_config['state_dict_path'], 'wb'))
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
 
         # Evaluation
         if (

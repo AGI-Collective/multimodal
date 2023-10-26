@@ -376,12 +376,15 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
     if train_dataloader is not None:
         train_state_dict_path = neox_args.train_streaming_data_config['state_dict_path']
         if os.path.exists(train_state_dict_path):
-            train_state_dict = pkl.load(open(train_state_dict_path, 'rb'))
-            print(train_state_dict)
-            train_dataloader.load_state_dict(train_state_dict)
-            # Print all the key value pairs of the state dict
-            for k, v in train_state_dict.items():
-                print_rank_0(f"Loaded {k} with value {v}")
+            file_name = os.path.join(train_state_dict_path, f'{neox_args.iteration}_checkpoint.pkl')
+    
+            if os.path.isfile(file_name):  # If the file exists
+                train_state_dict = pkl.load(open(file_name, 'rb'))  # Load the file
+                print(train_state_dict)
+                train_dataloader.load_state_dict(train_state_dict)
+            else:
+                print("No matching state dict found.")
+
         else:
             print_rank_0(
                 "setting training data start iteration to {}".format(
@@ -391,11 +394,15 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         
     if valid_dataloader is not None:
         valid_state_dict_path = neox_args.valid_streaming_data_config['state_dict_path']
-        if os.path.exists(valid_state_dict_path):    
-            valid_state_dict = pkl.load(open(valid_state_dict_path, 'rb'))
-            valid_dataloader.load_state_dict(valid_state_dict)
-            for k, v in train_state_dict.items():
-                print_rank_0(f"Loaded {k} with value {v}")
+        if os.path.exists(valid_state_dict_path): 
+            file_name = os.path.join(valid_state_dict_path, f'{neox_args.iteration}_checkpoint.pkl')
+    
+            if os.path.isfile(file_name):  # If the file exists
+                valid_state_dict = pkl.load(open(file_name, 'rb'))  # Load the file
+                print(valid_state_dict)
+                valid_dataloader.load_state_dict(valid_state_dict)
+            else:
+                print("No matching state dict found.")
         else:
             print_rank_0(
                 "setting validation data start iteration to {}".format(
