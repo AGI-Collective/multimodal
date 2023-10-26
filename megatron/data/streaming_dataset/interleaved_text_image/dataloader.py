@@ -24,34 +24,9 @@ from transformers import AutoImageProcessor, AutoModel
 from streaming.base.format.mds.encodings import Encoding, _encodings
 from einops import rearrange
 
-class PickleEncoding(Encoding):
-    def encode(self, data: List[Image.Image]) -> bytes:
-        return pickle.dumps(data)
-
-    def decode(self, data: bytes) -> np.ndarray:
-        data = pickle.loads(data)
-        # Convert PIL Images to numpy arrays
-        data = map(lambda x: np.array(x), data)
-        return np.stack(list(data))
-
+from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_dataset import simple_encoding, ListPIL, PickleEncoding
 _encodings['pickleencoding'] = PickleEncoding
-
-class simple_encoding(Encoding):
-    def encode(self, data: List[Image.Image]) -> bytes:
-        # Read all images into numpy array
-        data = map(lambda x: np.array(x), data)
-        data = np.stack(list(data))
-        assert data.shape == (len(data), 256, 256, 3), f'Expected shape (N, 256, 256, 3), got {data.shape}'
-        return data.tobytes()
-    
-    def decode(self, data: bytes) -> np.ndarray:
-        # convert bytes to numpy array
-        data = np.frombuffer(data, dtype=np.uint8)
-        # print(data.shape, data.reshape(-1, 256, 256, 3).shape)
-        # reshape to original shape
-        data = data.reshape(-1, 256, 256, 3)
-        return data
-
+_encodings['listpil'] = ListPIL
 _encodings['simple_encoding'] = simple_encoding
 
 def build_tokenizer(om_tokenizer_config: DictConfig) -> PreTrainedTokenizerBase:
@@ -230,10 +205,15 @@ class StreamingInterleavedDataset(StreamingDataset):
             raise RuntimeError(
                 'StreamingTextDataset needs samples to have a `text` or `tokens` column'
             )
-        vision_input = np.frombuffer(sample.get('images', None), dtype=np.uint8).copy().reshape(-1, 256, 256, 3)
+        images = list(map(lambda x: np.array(x), sample.get('images', None)))
+        if images != []:
+            images = np.stack(images)
+        else:
+            images = np.array([])
+        vision_input = images.reshape(-1, 224, 224, 3)    
         is_vision_empty = vision_input.shape[0] == 0
         if is_vision_empty:
-            vision_input = np.zeros((1, 256, 256, 3), dtype=np.uint8)
+            vision_input = np.zeros((1, 224, 224, 3), dtype=np.uint8)
         
         vision_input = torch.from_numpy(vision_input).to(torch.int64)
         vision_input = vision_input.unsqueeze(1) # TODO: Fix for num_frames > 1
