@@ -22,35 +22,11 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from transformers import AutoImageProcessor, AutoModel
 
 from streaming.base.format.mds.encodings import Encoding, _encodings
+from einops import rearrange
 
-class PickleEncoding(Encoding):
-    def encode(self, data: List[Image.Image]) -> bytes:
-        return pickle.dumps(data)
-
-    def decode(self, data: bytes) -> np.ndarray:
-        data = pickle.loads(data)
-        # Convert PIL Images to numpy arrays
-        data = map(lambda x: np.array(x), data)
-        return np.stack(list(data))
-
+from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_dataset import simple_encoding, ListPIL, PickleEncoding
 _encodings['pickleencoding'] = PickleEncoding
-
-class simple_encoding(Encoding):
-    def encode(self, data: List[Image.Image]) -> bytes:
-        # Read all images into numpy array
-        data = map(lambda x: np.array(x), data)
-        data = np.stack(list(data))
-        assert data.shape == (len(data), 256, 256, 3), f'Expected shape (N, 256, 256, 3), got {data.shape}'
-        return data.tobytes()
-    
-    def decode(self, data: bytes) -> np.ndarray:
-        # convert bytes to numpy array
-        data = np.frombuffer(data, dtype=np.uint8)
-        # print(data.shape, data.reshape(-1, 256, 256, 3).shape)
-        # reshape to original shape
-        data = data.reshape(-1, 256, 256, 3)
-        return data
-
+_encodings['listpil'] = ListPIL
 _encodings['simple_encoding'] = simple_encoding
 
 def build_tokenizer(om_tokenizer_config: DictConfig) -> PreTrainedTokenizerBase:
@@ -126,7 +102,7 @@ class StreamingInterleavedDataset(StreamingDataset):
     """
 
     def __init__(self,
-                 tokenizer: PreTrainedTokenizerBase,
+                 tokenizer,
                  max_seq_length: int,
                  streams: Optional[Sequence[Stream]] = None,
                  remote: Optional[str] = None,
@@ -146,6 +122,8 @@ class StreamingInterleavedDataset(StreamingDataset):
                  shuffle_algo: str = 'py1b',
                  shuffle_seed: int = 9176,
                  shuffle_block_size: int = 1 << 18,
+                 batching_method: str = 'random',
+                 vision_pad_id: int = -100,
                  **kwargs: Any):
 
         group_method = kwargs.pop('group_method', None)
@@ -188,10 +166,11 @@ class StreamingInterleavedDataset(StreamingDataset):
             shuffle_algo=shuffle_algo,
             shuffle_seed=shuffle_seed,
             shuffle_block_size=shuffle_block_size,
+            batching_method=batching_method,
         )
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
-        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+        self.vision_pad_id = vision_pad_id
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample: Mapping):
@@ -226,9 +205,22 @@ class StreamingInterleavedDataset(StreamingDataset):
             raise RuntimeError(
                 'StreamingTextDataset needs samples to have a `text` or `tokens` column'
             )
-        vision_input = np.frombuffer(sample.get('images', None), dtype=np.uint8).copy().reshape(-1, 256, 256, 3)
-        vision_input = self.processor(vision_input, return_tensors="pt")
-        vision_input = vision_input["pixel_values"].to(torch.int64).unsqueeze(1) # TODO: Fix for num_frames > 1
+        images = list(map(lambda x: np.array(x), sample.get('images', None)))
+        if images != []:
+            images = np.stack(images)
+        else:
+            images = np.array([])
+        vision_input = images.reshape(-1, 224, 224, 3)    
+        is_vision_empty = vision_input.shape[0] == 0
+        if is_vision_empty:
+            vision_input = np.zeros((1, 224, 224, 3), dtype=np.uint8)
+        
+        vision_input = torch.from_numpy(vision_input).to(torch.int64)
+        vision_input = vision_input.unsqueeze(1) # TODO: Fix for num_frames > 1
+        vision_input = rearrange(vision_input, "t f h w c -> t f c h w")
+        
+        if is_vision_empty:
+            vision_input = torch.ones_like(vision_input) * self.vision_pad_id
         multimodal_position_ids = torch.from_numpy(np.frombuffer(sample.get('multimodal_position_ids', None), dtype=np.int64).copy()).reshape(2, -1)
         labels = torch.from_numpy(np.frombuffer(sample.get('labels', None), dtype=np.int64).copy()).reshape(2, -1) 
         return (token_sample, vision_input, multimodal_position_ids, labels)
@@ -296,8 +288,9 @@ def build_interleaved_dataloader(
     # get kwargs
     streams_dict = cfg.dataset.pop('streams', None)
     mlm_probability = cfg.dataset.pop('mlm_probability', None)
-    eos_token_id = cfg.dataset.pop('eos_token_id', None)
-    bos_token_id = cfg.dataset.pop('bos_token_id', None)
+    position_pad_id = cfg.dataset.pop('position_pad_id', None)
+    pad_token_id = tokenizer.pad_token_id
+    vision_pad_id = cfg.dataset.pop('vision_pad_id', None)
 
     # build streams
     streams = None
@@ -312,21 +305,22 @@ def build_interleaved_dataloader(
     dataset = StreamingInterleavedDataset(
         tokenizer=tokenizer,
         streams=streams,
+        vision_pad_id=vision_pad_id,
         **cfg.dataset,
     )
 
     text_collate_fn = transformers.DataCollatorForLanguageModeling(
-        tokenizer=dataset.tokenizer,
+        tokenizer=tokenizer,
         mlm=mlm_probability is not None,
         mlm_probability=mlm_probability)
 
     text_collate_fn = TextNeoXCollateWrapper(text_collate_fn)
     
-    vision_collate_fn = PaddedCollateWrapper(pad_token_id=-1) # Each sample: (timesteps, num_vision, H, W, C)
+    vision_collate_fn = PaddedCollateWrapper(pad_token_id=vision_pad_id) # Each sample: (timesteps, num_vision, H, W, C)
 
-    multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
+    multimodal_position_ids_collate_fn = PaddedCollateWrapper(pad_token_id=position_pad_id, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
     
-    label_collate_fn = PaddedCollateWrapper(pad_token_id=-1, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
+    label_collate_fn = PaddedCollateWrapper(pad_token_id=pad_token_id, take_transpose=True) # Each sample: (num_modalities, max_seq_length)
 
     collate_fn = MultimodalCollateWrapper(text_collator=text_collate_fn, 
                                           vision_collator=vision_collate_fn, 
@@ -368,11 +362,11 @@ if __name__ == '__main__':
         help='the path to the remote copy to stream from (optional)')
     parser.add_argument('--split',
                         type=str,
-                        default='val',
+                        default='validation',
                         help='which split of the dataset to use')
     parser.add_argument('--max_seq_length',
                         type=int,
-                        default=32,
+                        default=2048,
                         help='max sequence length to test')
 
     args = parser.parse_args()
@@ -388,14 +382,15 @@ if __name__ == '__main__':
         'name': 'text',
         'dataset': {
             'local': args.local_path,
-            'remote': args.remote_path,
+            'remote': None,
             'split': args.split,
             'shuffle': False,
             'max_seq_length': args.max_seq_length,
             'keep_zip': True,  # in case we need compressed files after testing
+            'eos_token_id': 50256,
         },
-        'drop_last': False,
-        'num_workers': 4,
+        'drop_last': True,
+        'num_workers': 5,
     }
     cfg = om.create(cfg)
     device_batch_size = 2
@@ -405,9 +400,11 @@ if __name__ == '__main__':
     tokenizer_cfg = om.create(tokenizer_cfg)
     tokenizer = build_tokenizer(tokenizer_cfg)
 
-    loader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
-    tokenizer = loader.dataset.tokenizer  # type: ignore
-    for batch_ix, batch in enumerate(islice(loader, 5)):
+    loader = iter(build_interleaved_dataloader(cfg, tokenizer, device_batch_size))
+    # tokenizer = loader.dataset.tokenizer  # type: ignore
+    print("I am ready")
+    print(next(loader))
+    for batch_ix, batch in enumerate(loader):
         print('\n')
         print('#' * 20, f'Batch {batch_ix}', '#' * 20)
         for k, v in batch.items():

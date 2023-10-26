@@ -10,6 +10,7 @@ from .dinov2.models import vision_transformer as vits
 from .dinov2 import layers
 
 from transformers import AutoImageProcessor, AutoModel
+from .transforms import make_classification_eval_transform
 
 class DinoWrapper(nn.Module):
     def __init__(self, encoder, config):
@@ -17,6 +18,7 @@ class DinoWrapper(nn.Module):
         self.encoder = encoder
         self.config = config
         self.prepare_encoder()
+        self.transform = make_classification_eval_transform()
     
     def freeze_model(self):
         num_layers_to_unfreeze = self.config.num_layers_to_unfreeze
@@ -44,6 +46,9 @@ class DinoWrapper(nn.Module):
             c=number of channels, h=height, w=width
         '''
         b, t, c, h, w = x.shape 
+        combined_batch = rearrange(x, "b t c h w -> (b t) c h w")
+        preprocessed_vision = self.transform(combined_batch).half().contiguous()
+        x = rearrange(preprocessed_vision, "(b t) c h w -> b t c h w", b=b, t=t)
         if "vision" in self.config.arch:
             embeddings = self.encoder(x) # B, N_E, E
         else:

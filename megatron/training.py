@@ -57,6 +57,28 @@ from megatron.utils import (
 )
 from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
+import pickle as pkl
+
+import os 
+
+def save_dataloader_checkpoint(checkpoint_path, iteration, dataloader_state_dict):
+    save_checkpoint = False
+    if torch.distributed.is_initialized():
+        if torch.distributed.get_rank() == 0:
+            save_checkpoint = True
+    else:
+        save_checkpoint = True
+
+    if save_checkpoint:
+        if not os.path.isdir(checkpoint_path):  # If the folder does not exist
+            os.makedirs(checkpoint_path)  # Create the folder
+        
+        file_name = os.path.join(checkpoint_path, f'{iteration}_checkpoint.pkl')
+        
+        with open(file_name, 'wb') as file:
+            pkl.dump(dataloader_state_dict, file)
+        
+
 
 
 def mup_weights_reinit(neox_args, model):
@@ -198,14 +220,14 @@ def pretrain(neox_args):
     # Data stuff.
     timers("train/valid/test data iterators").start()
     (
-        train_data_iterator,
-        valid_data_iterator,
-        test_data_iterator,
+        train_dataloader,
+        valid_dataloader,
+        test_dataloader,
     ) = build_streaming_train_valid_test_data_iterators(neox_args=neox_args)
     timers("train/valid/test data iterators").stop()
 
     if neox_args.use_mup and neox_args.coord_check:
-        mup_coord_check(neox_args, timers, lr_scheduler, train_data_iterator)
+        mup_coord_check(neox_args, timers, lr_scheduler, iter(train_dataloader) if train_dataloader is not None else None)
 
     # Print setup timing.
     print_rank_0("done with setups ...")
@@ -223,6 +245,9 @@ def pretrain(neox_args):
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
+            
 
         iteration = train(
             neox_args=neox_args,
@@ -230,8 +255,8 @@ def pretrain(neox_args):
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            train_data_iterator=train_data_iterator,
-            valid_data_iterator=valid_data_iterator,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,
         )
 
     if neox_args.do_valid:
@@ -240,7 +265,7 @@ def pretrain(neox_args):
             neox_args=neox_args,
             prefix=prefix,
             forward_step_func=forward_step,
-            data_iterator=valid_data_iterator,
+            data_iterator=iter(valid_dataloader) if valid_dataloader is not None else None,
             model=model,
             iteration=iteration,
             verbose=False,
@@ -255,6 +280,8 @@ def pretrain(neox_args):
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
         )
+        save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+        save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
 
     if neox_args.do_test:
         # Run on test data.
@@ -263,7 +290,7 @@ def pretrain(neox_args):
             neox_args=neox_args,
             prefix=prefix,
             forward_step_func=forward_step,
-            data_iterator=test_data_iterator,
+            data_iterator=iter(test_dataloader) if test_dataloader is not None else None,
             model=model,
             iteration=iteration,
             verbose=True,
@@ -281,7 +308,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     if "labels" in data_b: # This our custom approach
         labels = data_b["labels"].long().contiguous()
         text_input = text_input_.contiguous()
-    else:
+    else: # This is not supported
         labels = text_input_[:, 1:].contiguous()
         text_input = text_input_[:, :-1].contiguous()
 
@@ -292,8 +319,8 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     max_text_length = text_input.shape[1]
     text_positions = multimodal_position_ids[:, MODALITY_DICT['text'], :max_text_length]
     text_labels = labels[:, MODALITY_DICT['text'], :max_text_length]
-    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['text'], max_text_length:] == -1)
-    assert torch.all(labels[:, MODALITY_DICT['text'], max_text_length:] == -1)
+    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['text'], max_text_length:] == neox_args.position_pad_id)
+    assert torch.all(labels[:, MODALITY_DICT['text'], max_text_length:] == tokenizer.pad_id)
     text_input_info = {
         "input": text_input,
         "labels": text_labels,
@@ -302,12 +329,12 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     }
 
     # Unpack vision_input and get padded vision length
-    vision_input = data_b["vision_input"].half().contiguous()
+    vision_input = data_b["vision_input"]
     max_vision_length = vision_input.shape[1]
     vision_positions = multimodal_position_ids[:, MODALITY_DICT['vision'], :max_vision_length]
     vision_labels = labels[:, MODALITY_DICT['vision'], :max_vision_length]
-    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['vision'], max_vision_length:] == -1)
-    assert torch.all(labels[:, MODALITY_DICT['vision'], max_vision_length:] == -1)
+    assert torch.all(multimodal_position_ids[:, MODALITY_DICT['vision'], max_vision_length:] == neox_args.position_pad_id)
+    assert torch.all(labels[:, MODALITY_DICT['vision'], max_vision_length:] == tokenizer.pad_id)
     vision_input_info = {
         "input": vision_input,
         "labels": vision_labels,
@@ -334,9 +361,11 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     attention_mask, loss_mask, position_ids, shifted_multimodal_position_ids, labels = get_multimodal_ltor_masks_and_position_ids(
         input_info=input_info,
         input_seq_length=neox_args.seq_length,
-        eod_token=neox_args.tokenizer.eod_id,
-        bos_token=neox_args.tokenizer.bos_id if hasattr(neox_args.tokenizer, "bos_id") else None,
-        pad_token=neox_args.tokenizer.pad_id,
+        eod_token=tokenizer.eod_id,
+        bos_token=tokenizer.bos_id if hasattr(tokenizer, "bos_id") else None,
+        pad_token=tokenizer.pad_id,
+        position_pad_token_id=neox_args.position_pad_id,
+        vision_start_token = tokenizer.image_start_id,
         concat_data=neox_args.concat_data,
         attn_uses_sequence_id=neox_args.attn_uses_sequence_id
     )
@@ -817,11 +846,12 @@ def train(
     model,
     optimizer,
     lr_scheduler,
-    train_data_iterator,
-    valid_data_iterator,
+    train_dataloader,
+    valid_dataloader,
 ):
     """Train the model function."""
-
+    train_data_iterator = iter(train_dataloader) if train_dataloader else None
+    valid_data_iterator = iter(valid_dataloader) if valid_dataloader else None
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -887,6 +917,8 @@ def train(
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
 
         # Evaluation
         if (

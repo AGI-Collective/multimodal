@@ -499,6 +499,11 @@ class NeoXArgsLogging(NeoXArgsTemplate):
     git_hash: str = get_git_commit_hash()
     """current git hash of repository"""
 
+    wandb_dir: str = None
+    """
+    Directory to save logs to.
+    """
+
     log_dir: str = None
     """
     Directory to save logs to.
@@ -715,8 +720,10 @@ class NeoXArgsTokenizer(NeoXArgsTemplate):
     """
     tokenizer object loaded into memory and accessible by other functions
     """
-
-
+    position_pad_id: int = -1
+    
+    vision_pad_id: int = 0
+    
 @dataclass
 class NeoXArgsTraining(NeoXArgsTemplate):
     """

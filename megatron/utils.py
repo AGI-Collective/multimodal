@@ -182,7 +182,7 @@ def get_shifted_multimodal_position_ids(input_info, position_pad_id=-1):
     shited_audio_positions = None
     return shifted_text_positions, shifted_vision_positions, shited_audio_positions
 
-def get_proxy_tokens(position_ids, seq_length, text_pad_id, position_pad_id=-1, start_ind=100):
+def get_proxy_tokens(position_ids, seq_length, pad_id, position_pad_id=-1, start_ind=100):
     multimodal_mask = position_ids != position_pad_id
 
     # All vision tokens are given a negative index
@@ -190,7 +190,7 @@ def get_proxy_tokens(position_ids, seq_length, text_pad_id, position_pad_id=-1, 
     proxy_tokens = torch.repeat_interleave(proxy_tokens, seq_length, dim=1)
     multimodal_mask = torch.repeat_interleave(multimodal_mask, seq_length, dim=1)
     proxy_masked_tokens = proxy_tokens*multimodal_mask
-    proxy_masked_tokens[proxy_masked_tokens == 0] = text_pad_id # This is any random text token. This cannot be equal to eos, or eod: TODO, can this be padid?
+    proxy_masked_tokens[proxy_masked_tokens == 0] = pad_id # This is any random text token. This cannot be equal to eos, or eod: TODO, can this be padid?
     return proxy_masked_tokens
 
 def get_multimodal_mask(interleaved_tokens, text_pad_id):
@@ -226,8 +226,8 @@ def get_multimodal_attn_mask(
     # lower triangular attention mask across all tokens
     mask = torch.tril(torch.ones((1, input_seq_length, input_seq_length), device=device)).expand((batch_size, -1, -1)).clone()
 
-    # Form vision proxy tokens using shifted multimodal position ids
-    proxy_vision_tokens = get_proxy_tokens(vision_positions, vision_seq_length, position_pad_id=position_pad_token_id, text_pad_id=text_pad_token_id, start_ind=100)
+    # Form vision proxy tokens using shifted multimodal position ids. Use text_pad_token_id as pad_id
+    proxy_vision_tokens = get_proxy_tokens(vision_positions, vision_seq_length, position_pad_id=position_pad_token_id, pad_id=text_pad_token_id, start_ind=100)
     # Do the same process for Audio #TODO
 
     # Concatenate vision proxy tokens with text tokens 
@@ -269,6 +269,8 @@ def get_multimodal_ltor_masks_and_position_ids(
     eod_token,
     bos_token,
     pad_token,
+    position_pad_token_id,
+    vision_start_token,
     concat_data=True,
     attn_uses_sequence_id=False,
 ):
@@ -294,7 +296,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         shifted_multimodal_position_ids=shifted_multimodal_position_ids,
         eos_token_id=eod_token,
         bos_token_id=bos_token,
-        position_pad_token_id=-1, # TODO, get whatever is used in streaming
+        position_pad_token_id=position_pad_token_id, 
         text_pad_token_id=pad_token,
         concat_data=concat_data,
         attn_uses_sequence_id=attn_uses_sequence_id,
@@ -319,6 +321,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         loss_mask[labels == pad_token] = 0.0
         loss_mask[labels == bos_token] = 0.0
         loss_mask[labels == eod_token] = 0.0
+        loss_mask[labels == vision_start_token] = 0.0
 
     position_ids = torch.arange(input_seq_length, dtype=torch.long, device=labels.device) # FIX THIS #TODO
     position_ids = position_ids.unsqueeze(0).expand(batch_size, input_seq_length)
@@ -381,6 +384,7 @@ def init_wandb(neox_args):
     if neox_args.use_wandb:
         group_name = neox_args.wandb_group
         name = f"{socket.gethostname()}-{local_rank()}" if group_name else None
+        print("Logging wandb to:", neox_args.wandb_dir, flush=True)
         try:
             wandb.init(
                 project=neox_args.wandb_project,
@@ -389,6 +393,7 @@ def init_wandb(neox_args):
                 save_code=False,
                 force=False,
                 entity=neox_args.wandb_team,
+                dir=neox_args.wandb_dir,
             )
         except wandb.UsageError as e:
             neox_args.update_value("use_wandb", False)
