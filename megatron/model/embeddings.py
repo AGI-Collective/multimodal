@@ -212,25 +212,11 @@ class ImageEncoder(torch.nn.Module):
         embeddings = embeddings.reshape(batch_size, max_seq_length, -1)  
         embeddings = rearrange(embeddings, "(b t) n f -> b t n f", b=original_batch_size, t=num_images)
         return embeddings
-        
-class Args:
-    def __init__(self):
-        self.arch = "vit_base"
-        self.modality = "vision"
-        self.patch_size = 14
-        self.drop_path_rate = 0.4
-        self.ffn_layer = "swiglufused"
-        self.block_chunks = 4
-        self.img_size = 518
-        self.pretrained_weights=r'/p/scratch/ccstdl/gupta6/dinov2/dinobase.pt'
-        self.freeze_encoder = True
-        self.add_lora = False
-        self.pretrained = True
-        self.encoder_type = "dinov2_base"
-        self.embed_dropout_prob = 0.1
-        self.use_embed_layernorm = True
-        self.perceiver_seq_length = 64
-        self.num_layers_to_unfreeze = 1
+
+class Config:
+    def __init__(self, dictionary):
+        for key, value in dictionary.items():
+            setattr(self, key, value)
 
 class EmbeddingPipe(Embedding):
     """Extends Embedding to forward attention_mask through the pipeline."""
@@ -240,7 +226,7 @@ class EmbeddingPipe(Embedding):
         # self.image_encoder = ImageEncoder(neox_args)
         self.neox_args = neox_args  
         self.seq_length = neox_args.seq_length
-        self.image_encoder_args = Args()
+        self.image_encoder_args = Config(neox_args.vision_encoder_args)
         self.image_encoder = MultiModalEncoder(self.image_encoder_args, neox_args.hidden_size)
 
     @property
