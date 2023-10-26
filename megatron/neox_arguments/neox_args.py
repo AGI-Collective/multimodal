@@ -383,6 +383,7 @@ class NeoXArgsModel(NeoXArgsTemplate):
     """
     Parameter controlling whether the output layer is parallelized over the hidden dim (row) or the vocab dim (column)
     """
+    vision_encoder_args: dict = None
 
 
 @dataclass
