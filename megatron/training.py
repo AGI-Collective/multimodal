@@ -42,12 +42,12 @@ from megatron import print_rank_0, mpu
 from megatron.model import (
     GPT2ModelPipe,
     SoftEmbedding,
-    get_params_for_weight_decay_optimization,
+    get_param_groups,
 )
 from megatron.checkpointing import load_checkpoint, save_checkpoint
 from megatron.data.data_utils import build_train_valid_test_data_iterators, build_streaming_train_valid_test_data_iterators
 from megatron.initialize import initialize_megatron
-from megatron.learning_rates import AnnealingLR
+from megatron.learning_rates import AnnealingLR, GroupedAnnealingLR
 from megatron.logging import tb_wandb_log, training_log
 from megatron.utils import (
     OverflowMonitor,
@@ -541,7 +541,7 @@ def get_optimizer(model, neox_args):
         )
         exit()
     # Build parameter groups (weight decay and non-decay).
-    param_groups = get_params_for_weight_decay_optimization(model, neox_args)
+    param_groups = get_param_groups(model, neox_args)
     print_rank_0(
         f'Configuring Optimizer type: {neox_args.optimizer_type} with params: {neox_args.optimizer["params"]}'
     )
@@ -672,7 +672,7 @@ def get_learning_rate_scheduler(optimizer, neox_args):
     num_iters = max(1, num_iters)
     init_step = 0
     warmup_iter = neox_args.warmup * num_iters
-    lr_scheduler = AnnealingLR(
+    lr_scheduler = GroupedAnnealingLR(
         optimizer,
         start_lr=neox_args.lr,
         warmup_iter=warmup_iter,
@@ -683,6 +683,7 @@ def get_learning_rate_scheduler(optimizer, neox_args):
         use_checkpoint_lr_scheduler=neox_args.use_checkpoint_lr_scheduler,
         override_lr_scheduler=neox_args.override_lr_scheduler,
         use_mup=neox_args.use_mup,
+        lr_param_groups_config=neox_args.lr_param_groups_config,
     )
 
     return lr_scheduler
@@ -888,7 +889,11 @@ def train(
         # get learning rate (if present) - if doing soft prompt tuning + pipe parallel, you
         # may have no tunable parameters on a specific rank
         if optimizer.param_groups:
-            lr = optimizer.param_groups[0].get("lr", 0)
+            lr = {} #optimizer.param_groups[0].get("lr", 0)
+            print(len(optimizer.param_groups))
+            for param_group in optimizer.param_groups:
+                print(param_group["name"])
+                lr[param_group["name"]] = param_group.get("lr", 0)
         else:
             lr = 0
 

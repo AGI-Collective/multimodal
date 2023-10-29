@@ -471,6 +471,7 @@ class NeoXArgsLRScheduler(NeoXArgsTemplate):
     """
     Use checkpoint to set the values of the scheduler (learning rate, warmup iterations, minimum learning rate, maximum number of iterations, and decay style from checkpoint and ignore input arguments.
     """
+    lr_param_groups_config: dict = None
 
 
 @dataclass
