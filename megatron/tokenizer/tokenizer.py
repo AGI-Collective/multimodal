@@ -243,6 +243,11 @@ class HFTokenizer(AbstractTokenizer):
         self.image_end_text = "<|image_end|>"
         self.image_end_id = self.tokenizer.token_to_id("<|image_end|>")
 
+        self.image_gen_start_text = "<|image_gen_start|>"
+        self.image_gen_start_id = self.tokenizer.token_to_id("<|image_gen_start|>")
+        self.image_gen_end_text = "<|image_gen_end|>"
+        self.image_gen_end_id = self.tokenizer.token_to_id("<|image_gen_end|>")
+
     @property
     def vocab_size(self):
         return self.tokenizer.get_vocab_size()

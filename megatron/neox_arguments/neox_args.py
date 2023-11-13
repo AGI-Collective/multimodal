@@ -773,7 +773,7 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     List of paths to validation datasets.
     """
 
-    valid_streaming_data_config: dict = None
+    valid_streaming_data_config: list = None
     """
     Dictionary configuring streaming validation dataset.
     """

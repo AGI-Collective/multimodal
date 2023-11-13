@@ -61,7 +61,7 @@ import pickle as pkl
 
 import os 
 
-def save_dataloader_checkpoint(checkpoint_path, iteration, dataloader_state_dict):
+def save_dataloader_checkpoint(checkpoint_path, iteration, dataloader_state_dicts):
     save_checkpoint = False
     if torch.distributed.is_initialized():
         if torch.distributed.get_rank() == 0:
@@ -73,12 +73,12 @@ def save_dataloader_checkpoint(checkpoint_path, iteration, dataloader_state_dict
         if not os.path.isdir(checkpoint_path):  # If the folder does not exist
             os.makedirs(checkpoint_path)  # Create the folder
         
-        file_name = os.path.join(checkpoint_path, f'{iteration}_checkpoint.pkl')
-        
-        with open(file_name, 'wb') as file:
-            pkl.dump(dataloader_state_dict, file)
-        
+        for i, dataloader_state_dict in enumerate(dataloader_state_dicts):
 
+            file_name = os.path.join(checkpoint_path, f'{iteration}_checkpoint_{i}.pkl')
+            
+            with open(file_name, 'wb') as file:
+                pkl.dump(dataloader_state_dict, file)
 
 
 def mup_weights_reinit(neox_args, model):
@@ -221,7 +221,7 @@ def pretrain(neox_args):
     timers("train/valid/test data iterators").start()
     (
         train_dataloader,
-        valid_dataloader,
+        valid_dataloaders,
         test_dataloader,
     ) = build_streaming_train_valid_test_data_iterators(neox_args=neox_args)
     timers("train/valid/test data iterators").stop()
@@ -245,8 +245,8 @@ def pretrain(neox_args):
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
-            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
-            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, [train_dataloader.state_dict()])
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config[0]['state_dict_path'], iteration, [valid_dataloader.state_dict() for valid_dataloader in valid_dataloaders])
             
 
         iteration = train(
@@ -256,21 +256,23 @@ def pretrain(neox_args):
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             train_dataloader=train_dataloader,
-            valid_dataloader=valid_dataloader,
+            valid_dataloaders=valid_dataloaders,
         )
 
     if neox_args.do_valid:
         prefix = "the end of training for val data"
-        evaluate_and_print_results(
-            neox_args=neox_args,
-            prefix=prefix,
-            forward_step_func=forward_step,
-            data_iterator=iter(valid_dataloader) if valid_dataloader is not None else None,
-            model=model,
-            iteration=iteration,
-            verbose=False,
-            timers=timers,
-        )
+        for v_i, valid_dataloader in enumerate(valid_dataloaders):
+            evaluate_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterator=iter(valid_dataloader) if valid_dataloader is not None else None,
+                model=model,
+                iteration=iteration,
+                verbose=False,
+                timers=timers,
+                eval_name=f"val{v_i}",
+            )
 
     if neox_args.save and iteration != 0:
         save_checkpoint(
@@ -280,8 +282,8 @@ def pretrain(neox_args):
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
         )
-        save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
-        save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
+        save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, [train_dataloader.state_dict()])
+        save_dataloader_checkpoint(neox_args.valid_streaming_data_config[0]['state_dict_path'], iteration, [valid_dataloader.state_dict() for valid_dataloader in valid_dataloaders])
 
     if neox_args.do_test:
         # Run on test data.
@@ -365,12 +367,27 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         bos_token=tokenizer.bos_id if hasattr(tokenizer, "bos_id") else None,
         pad_token=tokenizer.pad_id,
         position_pad_token_id=neox_args.position_pad_id,
-        vision_start_token = tokenizer.image_start_id,
+        vision_input_start_token = tokenizer.image_start_id,
+        vision_input_end_token = tokenizer.image_end_id,
+        vision_gen_start_token = tokenizer.image_gen_start_id,
         concat_data=neox_args.concat_data,
         attn_uses_sequence_id=neox_args.attn_uses_sequence_id
     )
 
     multimodal_position_ids = shifted_multimodal_position_ids # The shifted corrected version is directly used    
+    # print('text_input', text_input)
+    # print(neox_args.tokenizer.tokenizer.decode)
+    # for i in range(text_input.shape[0]):
+    #     print('text_input', text_input[i].tolist())
+    #     print(neox_args.tokenizer.tokenizer.decode(text_input[i].tolist(), skip_special_tokens=False))
+    #     # print("vision_input shape", vision_input[i].shape)
+    #     print("multimodal_position_ids", multimodal_position_ids[i].tolist())
+    #     print("labels", labels[i].tolist())
+    #     print("loss_mask", loss_mask[i].tolist())
+    #     print("attention_mask", attention_mask[i].tolist())
+    #     print("position_ids", position_ids[i].tolist())
+    # exit()
+
     return text_input, vision_input, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids
 
 
@@ -479,6 +496,9 @@ def get_model(neox_args, use_cache=False):
         topology=mpu.get_topology(),
         use_cache=use_cache,
     )
+
+    # Print state dict keys.
+    # print(model.state_dict().keys())
 
     ### soft prompt tuning stuff ###
     if neox_args.soft_prompt_tuning is not None and neox_args.soft_prompt_tuning.get(
@@ -848,11 +868,11 @@ def train(
     optimizer,
     lr_scheduler,
     train_dataloader,
-    valid_dataloader,
+    valid_dataloaders,
 ):
     """Train the model function."""
     train_data_iterator = iter(train_dataloader) if train_dataloader else None
-    valid_data_iterator = iter(valid_dataloader) if valid_dataloader else None
+    valid_data_iterators = [iter(valid_dataloader) if valid_dataloader else None for valid_dataloader in valid_dataloaders]
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -890,9 +910,7 @@ def train(
         # may have no tunable parameters on a specific rank
         if optimizer.param_groups:
             lr = {} #optimizer.param_groups[0].get("lr", 0)
-            print(len(optimizer.param_groups))
             for param_group in optimizer.param_groups:
-                print(param_group["name"])
                 lr[param_group["name"]] = param_group.get("lr", 0)
         else:
             lr = 0
@@ -922,8 +940,8 @@ def train(
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
             )
-            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, train_dataloader.state_dict())
-            save_dataloader_checkpoint(neox_args.valid_streaming_data_config['state_dict_path'], iteration, valid_dataloader.state_dict())
+            save_dataloader_checkpoint(neox_args.train_streaming_data_config['state_dict_path'], iteration, [train_dataloader.state_dict()])
+            save_dataloader_checkpoint(neox_args.valid_streaming_data_config[0]['state_dict_path'], iteration, [valid_dataloader.state_dict() for valid_dataloader in valid_dataloaders])
 
         # Evaluation
         if (
@@ -932,16 +950,18 @@ def train(
             and neox_args.do_valid
         ):
             prefix = "iteration {}".format(iteration)
-            evaluate_and_print_results(
-                neox_args=neox_args,
-                prefix=prefix,
-                forward_step_func=forward_step,
-                data_iterator=valid_data_iterator,
-                model=model,
-                iteration=iteration,
-                verbose=False,
-                timers=timers,
-            )
+            for v_i, valid_data_iterator in enumerate(valid_data_iterators):
+                evaluate_and_print_results(
+                    neox_args=neox_args,
+                    prefix=prefix,
+                    forward_step_func=forward_step,
+                    data_iterator=valid_data_iterator,
+                    model=model,
+                    iteration=iteration,
+                    verbose=False,
+                    timers=timers,
+                    eval_name=f"val{v_i}",
+                )
 
         if neox_args.exit_interval and iteration % neox_args.exit_interval == 0:
             torch.distributed.barrier()
@@ -958,7 +978,7 @@ def train(
 
 
 def evaluate(
-    neox_args, forward_step_fn, data_iterator, model, verbose=False, timers=None
+    neox_args, forward_step_fn, data_iterator, model, verbose=False, timers=None, eval_name=None
 ):
     """Evaluation.
     neox_args: NeoX Arguments
@@ -980,9 +1000,11 @@ def evaluate(
         while iteration < neox_args.eval_iters:
             iteration += 1
             if verbose and iteration % neox_args.log_interval == 0:
-                print_rank_0(
-                    "Evaluating iter {}/{}".format(iteration, neox_args.eval_iters)
-                )
+                if not eval_name:
+                    eval_name = "Evaluation"
+                else:
+                    eval_name = "Evaluation ({})".format(eval_name)
+                print_rank_0(eval_name + " iter {}/{}".format(iteration, neox_args.eval_iters))
 
             # although we're not accumulating gradients here, we count one iter as train_batch_size_per_gpu * g.a.s
             # to be consistent with deepspeed's pipe parallel engine
@@ -1045,6 +1067,7 @@ def evaluate_and_print_results(
     verbose=False,
     timers=None,
     chart_name="validation",
+    eval_name=None,
 ):
     """Helper function to evaluate and dump results on screen."""
     total_loss_dict = evaluate(
@@ -1054,15 +1077,24 @@ def evaluate_and_print_results(
         model=model,
         verbose=verbose,
         timers=timers,
+        eval_name=eval_name,
     )
     string = f" {chart_name} results at {prefix} | "
+    if eval_name:
+        string = f" {chart_name} for {eval_name} at {prefix} | "
+    else:
+        string = f" {chart_name} results at {prefix} | "
     for k, v in total_loss_dict.items():
         if isinstance(v, dict):
             for k2, v2 in v.items():
                 k3 = "_".join([k, k2])
                 string += f"{k3} value: {v2:.6E} | "
+                if eval_name:
+                    key = f"{chart_name}/{eval_name}/{k3}"
+                else:
+                    key = f"{chart_name}/{k3}"
                 tb_wandb_log(
-                    f"{chart_name}/{k3}",
+                    key,
                     v2,
                     iteration,
                     use_wandb=neox_args.use_wandb,
@@ -1070,8 +1102,12 @@ def evaluate_and_print_results(
                 )
         else:
             string += f"{k} value: {v:.6E} | "
+            if eval_name:
+                key = f"{chart_name}/{eval_name}/{k}"
+            else:
+                key = f"{chart_name}/{k}"
             tb_wandb_log(
-                f"{chart_name}/{k}",
+                key,
                 v,
                 iteration,
                 use_wandb=neox_args.use_wandb,

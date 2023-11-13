@@ -255,12 +255,13 @@ def get_multimodal_attn_mask(
             sequence_ids_3d_2 = sequence_ids.unsqueeze(1)
             matching_sequence_ids = torch.eq(sequence_ids_3d_1, sequence_ids_3d_2)
             mask = mask * matching_sequence_ids
-    
+    else:
+        sequence_ids = None
     # convert to binary
     mask = mask.view(
         batch_size, 1, input_seq_length, input_seq_length
     )
-    return mask < 0.5 # TODO Why?
+    return mask < 0.5, sequence_ids
 
 
 def get_multimodal_ltor_masks_and_position_ids(
@@ -270,7 +271,9 @@ def get_multimodal_ltor_masks_and_position_ids(
     bos_token,
     pad_token,
     position_pad_token_id,
-    vision_start_token,
+    vision_input_start_token,
+    vision_input_end_token,
+    vision_gen_start_token,
     concat_data=True,
     attn_uses_sequence_id=False,
 ):
@@ -287,7 +290,7 @@ def get_multimodal_ltor_masks_and_position_ids(
     shifted_multimodal_position_ids = torch.cat((shifted_text_positions, shifted_vision_positions), dim=1)
     
     # Attention mask (lower triangular). # TODO: INCLUDE Audio in this
-    attention_mask = get_multimodal_attn_mask(
+    attention_mask, sequence_ids = get_multimodal_attn_mask(
         text_tokens=input_info["text"]["input"],
         vision_positions=input_info["vision"]["positions"],
         audio_positions=None,
@@ -321,7 +324,13 @@ def get_multimodal_ltor_masks_and_position_ids(
         loss_mask[labels == pad_token] = 0.0
         loss_mask[labels == bos_token] = 0.0
         loss_mask[labels == eod_token] = 0.0
-        loss_mask[labels == vision_start_token] = 0.0
+        loss_mask[labels == vision_input_start_token] = 0.0
+        loss_mask[labels == vision_input_end_token] = 0.0
+        loss_mask[labels == vision_gen_start_token] = 0.0
+
+    # if concat_data:
+        
+    # else:
 
     position_ids = torch.arange(input_seq_length, dtype=torch.long, device=labels.device) # FIX THIS #TODO
     position_ids = position_ids.unsqueeze(0).expand(batch_size, input_seq_length)
