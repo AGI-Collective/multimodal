@@ -308,7 +308,7 @@ def weights_by_num_docs(l: list, alpha=0.3):
 def build_streaming_train_valid_test_data_iterators(neox_args):
     """XXX"""
 
-    (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
+    (train_dataloader, valid_dataloaders, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
 
@@ -333,11 +333,12 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
             dataset_config['dataset']['vision_pad_id'] = neox_args.vision_pad_id
 
         prepare_config(neox_args.train_streaming_data_config)
-        prepare_config(neox_args.valid_streaming_data_config)
+        for valid_streaming_data_config in neox_args.valid_streaming_data_config:
+            prepare_config(valid_streaming_data_config)
         prepare_config(neox_args.test_streaming_data_config)
 
         train_dataset_cfg = om.create(neox_args.train_streaming_data_config)
-        validation_dataset_cfg = om.create(neox_args.valid_streaming_data_config)
+        validation_dataset_cfgs = [om.create(valid_streaming_data_config) for valid_streaming_data_config in neox_args.valid_streaming_data_config]
         test_dataset_cfg = om.create(neox_args.test_streaming_data_config)
         
         device_batch_size = neox_args.batch_size # Set batch size correctly with mp and pp in mind # TODO
@@ -345,12 +346,12 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
         tokenizer = neox_args.tokenizer
 
         train_dataloader = build_interleaved_dataloader(train_dataset_cfg, tokenizer, device_batch_size)
-        valid_dataloader = build_interleaved_dataloader(validation_dataset_cfg, tokenizer, device_batch_size)
+        valid_dataloaders = [build_interleaved_dataloader(validation_dataset_cfg, tokenizer, device_batch_size) for validation_dataset_cfg in validation_dataset_cfgs]
         test_dataloader = build_interleaved_dataloader(test_dataset_cfg, tokenizer, device_batch_size)
 
         # Flags to know if we need to do training/validation/testing.
         do_train = train_dataloader is not None and neox_args.train_iters > 0
-        do_valid = valid_dataloader is not None and neox_args.eval_iters > 0
+        do_valid = valid_dataloaders is not None and neox_args.eval_iters > 0
         do_test = test_dataloader is not None and neox_args.eval_iters > 0
         flags = torch.cuda.LongTensor([int(do_train), int(do_valid), int(do_test)])
     else:
@@ -376,7 +377,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
     if train_dataloader is not None:
         train_state_dict_path = neox_args.train_streaming_data_config['state_dict_path']
         if os.path.exists(train_state_dict_path):
-            file_name = os.path.join(train_state_dict_path, f'{neox_args.iteration}_checkpoint.pkl')
+            file_name = os.path.join(train_state_dict_path, f'{neox_args.iteration}_checkpoint_0.pkl') # There is always only 1 train dataloader
     
             if os.path.isfile(file_name):  # If the file exists
                 train_state_dict = pkl.load(open(file_name, 'rb'))  # Load the file
@@ -392,17 +393,17 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
                 )
             )
         
-    if valid_dataloader is not None:
-        valid_state_dict_path = neox_args.valid_streaming_data_config['state_dict_path']
+    if valid_dataloaders is not None:
+        valid_state_dict_path = neox_args.valid_streaming_data_config[0]['state_dict_path']
         if os.path.exists(valid_state_dict_path): 
-            file_name = os.path.join(valid_state_dict_path, f'{neox_args.iteration}_checkpoint.pkl')
-    
-            if os.path.isfile(file_name):  # If the file exists
-                valid_state_dict = pkl.load(open(file_name, 'rb'))  # Load the file
-                print(valid_state_dict)
-                valid_dataloader.load_state_dict(valid_state_dict)
-            else:
-                print("No matching state dict found.")
+            for v_i, valid_dataloader in enumerate(valid_dataloaders):
+                file_name = os.path.join(valid_state_dict_path, f'{neox_args.iteration}_checkpoint_{v_i}.pkl')
+                if os.path.isfile(file_name):  # If the file exists
+                    valid_state_dict = pkl.load(open(file_name, 'rb'))  # Load the file
+                    print(valid_state_dict)
+                    valid_dataloader.load_state_dict(valid_state_dict)
+                else:
+                    print("No matching state dict found.")
         else:
             print_rank_0(
                 "setting validation data start iteration to {}".format(
@@ -410,7 +411,7 @@ def build_streaming_train_valid_test_data_iterators(neox_args):
                 )
             )
 
-    return train_dataloader, valid_dataloader, test_dataloader
+    return train_dataloader, valid_dataloaders, test_dataloader
 
 def build_train_valid_test_data_iterators(neox_args):
     """XXX"""
