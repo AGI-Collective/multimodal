@@ -24,47 +24,75 @@ from types import GeneratorType
 import torch.distributed as dist
 
 
-def get_params_for_weight_decay_optimization(module, neox_args):
+def update_params_for_weight_decay(weight_decay_params:dict, no_weight_decay_params:dict, module_, weight_decay:float):
     """Divide params into with-weight-decay and without-weight-decay groups.
     Layernorms and biases will have no weight decay but the rest will.
     """
-    weight_decay_params = {"params": []}
-    no_weight_decay_params = {"params": [], "weight_decay": 0.0}
-    for module_ in module.modules():
-        if any(
+    if any(
+        [
+            isinstance(module_, LayerNorm),
+            isinstance(module_, RMSNorm),
+            isinstance(module_, ScaleNorm),
+        ]
+    ) or (
+        weight_decay == 0.0
+    ):  # also include all parameters here if no weight decay is being done
+        no_weight_decay_params["params"].extend(
+            [p for p in list(module_._parameters.values()) if p is not None]
+        )
+    else:
+        weight_decay_params["params"].extend(
             [
-                isinstance(module_, LayerNorm),
-                isinstance(module_, RMSNorm),
-                isinstance(module_, ScaleNorm),
+                p
+                for n, p in list(module_._parameters.items())
+                if p is not None and n != "bias"
             ]
-        ) or (
-            neox_args.weight_decay == 0.0
-        ):  # also include all parameters here if no weight decay is being done
-            no_weight_decay_params["params"].extend(
-                [p for p in list(module_._parameters.values()) if p is not None]
-            )
-        else:
-            weight_decay_params["params"].extend(
-                [
-                    p
-                    for n, p in list(module_._parameters.items())
-                    if p is not None and n != "bias"
-                ]
-            )
-            no_weight_decay_params["params"].extend(
-                [
-                    p
-                    for n, p in list(module_._parameters.items())
-                    if p is not None and n == "bias"
-                ]
-            )
+        )
+        no_weight_decay_params["params"].extend(
+            [
+                p
+                for n, p in list(module_._parameters.items())
+                if p is not None and n == "bias"
+            ]
+        )
+
+def get_param_groups(module, neox_args):
+    param_groups = {}
+
+    # Defaults 
+    param_groups["weight_decay"] = {"name": "weight_decay", "params": [],  "weight_decay": neox_args.weight_decay}
+    param_groups["no_weight_decay"] = {"name": "no_weight_decay", "params": [], "weight_decay": 0.0}
+
+    neox_special_params = neox_args.lr_param_groups_config.keys() if neox_args.lr_param_groups_config else []
+    for name, module_ in module.named_modules():
+        added = False
+        for special_lr_key in neox_special_params:
+            if special_lr_key in name:
+                if f"{special_lr_key}_weight_decay" not in param_groups:
+                    param_groups[f"{special_lr_key}_weight_decay"] = {"params": [], "name": special_lr_key, "weight_decay": neox_args.weight_decay}
+                    param_groups[f"{special_lr_key}_no_weight_decay"] = {"params": [], "name": special_lr_key, "weight_decay": 0.0}
+                update_params_for_weight_decay(
+                    param_groups[f"{special_lr_key}_weight_decay"], param_groups[f"{special_lr_key}_no_weight_decay"], module_, neox_args.weight_decay)
+                added = True
+                break
+        if not added:
+            update_params_for_weight_decay(
+                param_groups["weight_decay"], param_groups["no_weight_decay"], module_, neox_args.weight_decay)
+            added = True
+    
+    # Convert dictionary to list of dictionaries
+    # param_groups = list(reversed([param_groups[key] for key in param_groups]))
+    param_groups = [param_groups[key] for key in param_groups]
     if neox_args.weight_decay == 0.0:
-        # only return a single param group
+        # only return param groups without weight decay
         # with onebitadam, we want to minimize the calls to compressed_allreduce. Every param group calls it once.
         # to avoid this, only use a single param group when weight decay is off.
-        return [no_weight_decay_params]
-    return weight_decay_params, no_weight_decay_params
-
+        new_param_groups = []
+        for param_group in param_groups.keys():
+            if "no_weight_decay" in param_group:
+                new_param_groups.append(param_groups[param_group])
+        param_groups = new_param_groups
+    return param_groups
 
 def exists(x):
     return x is not None

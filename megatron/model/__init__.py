@@ -16,5 +16,5 @@
 # limitations under the License.
 
 from .gpt2_model import GPT2ModelPipe
-from .utils import get_params_for_weight_decay_optimization
+from .utils import get_param_groups
 from .embeddings import SoftEmbedding

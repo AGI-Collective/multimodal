@@ -173,13 +173,15 @@ def training_log(
                         )
 
     # write losses, lr, etc. every step
-    tb_wandb_log(
-        "train/learning_rate",
-        learning_rate,
-        iteration,
-        use_wandb=neox_args.use_wandb,
-        tensorboard_writer=neox_args.tensorboard_writer,
-    )
+    for param_group_key in learning_rate.keys():
+        tb_wandb_log(
+            f"train/learning_rate_{param_group_key}",
+            learning_rate[param_group_key],
+            iteration,
+            use_wandb=neox_args.use_wandb,
+            tensorboard_writer=neox_args.tensorboard_writer,
+        )
+
     for key in loss_dict:
         tb_wandb_log(
             f'train/{key.replace(" ", "_")}',
@@ -298,7 +300,10 @@ def training_log(
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(
             elapsed_time * 1000.0 / neox_args.log_interval
         )
-        log_string += " learning rate: {:.3E} |".format(learning_rate)
+        for param_group_key in learning_rate.keys():
+            log_string += " param group {} lr: {:.3E} |".format(
+                param_group_key, learning_rate[param_group_key]
+            )
         num_iterations = max(
             1, neox_args.log_interval - total_loss_dict[skipped_iters_key]
         )
