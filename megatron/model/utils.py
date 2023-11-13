@@ -65,6 +65,7 @@ def get_param_groups(module, neox_args):
 
     neox_special_params = neox_args.lr_param_groups_config.keys() if neox_args.lr_param_groups_config else []
     for name, module_ in module.named_modules():
+        added = False
         for special_lr_key in neox_special_params:
             if special_lr_key in name:
                 if f"{special_lr_key}_weight_decay" not in param_groups:
@@ -72,12 +73,16 @@ def get_param_groups(module, neox_args):
                     param_groups[f"{special_lr_key}_no_weight_decay"] = {"params": [], "name": special_lr_key, "weight_decay": 0.0}
                 update_params_for_weight_decay(
                     param_groups[f"{special_lr_key}_weight_decay"], param_groups[f"{special_lr_key}_no_weight_decay"], module_, neox_args.weight_decay)
+                added = True
                 break
-        update_params_for_weight_decay(
-            param_groups["weight_decay"], param_groups["no_weight_decay"], module_, neox_args.weight_decay)
+        if not added:
+            update_params_for_weight_decay(
+                param_groups["weight_decay"], param_groups["no_weight_decay"], module_, neox_args.weight_decay)
+            added = True
     
     # Convert dictionary to list of dictionaries
-    param_groups = list(reversed([param_groups[key] for key in param_groups]))[:2]
+    # param_groups = list(reversed([param_groups[key] for key in param_groups]))
+    param_groups = [param_groups[key] for key in param_groups]
     if neox_args.weight_decay == 0.0:
         # only return param groups without weight decay
         # with onebitadam, we want to minimize the calls to compressed_allreduce. Every param group calls it once.
