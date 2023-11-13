@@ -28,28 +28,7 @@ from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_d
 _encodings['pickleencoding'] = PickleEncoding
 _encodings['listpil'] = ListPIL
 _encodings['simple_encoding'] = simple_encoding
-
-def build_tokenizer(om_tokenizer_config: DictConfig) -> PreTrainedTokenizerBase:
-    os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
-    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
-    resolved_om_tokenizer_config = om.to_container(om_tokenizer_config,
-                                                   resolve=True)
-    tokenizer_kwargs = resolved_om_tokenizer_config.get(  # type: ignore
-        'kwargs', {})
-    tokenizer_name = resolved_om_tokenizer_config['name']  # type: ignore
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name,
-                                              **tokenizer_kwargs)
-
-    # HuggingFace does not respect the model_max_length kwarg, and overrides it with
-    # min(kwargs['model_max_length'], original_config['model_max_length']), so we
-    # explicitly set it here
-    tokenizer.model_max_length = tokenizer_kwargs.get(
-        'model_max_length',
-        int(1e30),
-    )
-
-    return tokenizer
+from megatron.tokenizer.tokenizer import build_tokenizer
 
 class StreamingInterleavedDataset(StreamingDataset):
     """Generic text dataset using MosaicML's StreamingDataset.
@@ -306,6 +285,8 @@ def build_interleaved_dataloader(
         tokenizer=tokenizer,
         streams=streams,
         vision_pad_id=vision_pad_id,
+        batch_size=device_batch_size,
+        epoch_size=cfg.get('epoch_size', None),
         **cfg.dataset,
     )
 
@@ -347,10 +328,6 @@ def build_interleaved_dataloader(
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tokenizer',
-                        type=str,
-                        default='EleutherAI/gpt-neox-20b',
-                        help='the name of the tokenizer to use')
     parser.add_argument('--local_path',
                         type=str,
                         required=True,
@@ -368,6 +345,10 @@ if __name__ == '__main__':
                         type=int,
                         default=2048,
                         help='max sequence length to test')
+
+    parser.add_argument('--tokenizer_type', type=str, required=False, default=None)
+    parser.add_argument('--vocab_file', type=str, required=False, default=None)
+    parser.add_argument('--merge_file', type=str, required=False, default=None)
 
     args = parser.parse_args()
 
@@ -387,23 +368,36 @@ if __name__ == '__main__':
             'shuffle': False,
             'max_seq_length': args.max_seq_length,
             'keep_zip': True,  # in case we need compressed files after testing
-            'eos_token_id': 50256,
+            'position_pad_id': -1,
+            'vision_pad_id': 0, 
         },
         'drop_last': True,
         'num_workers': 5,
     }
     cfg = om.create(cfg)
+
     device_batch_size = 2
 
-    tokenizer_cfg = {'name': args.tokenizer, 'kwargs': {}}
-    tokenizer_cfg['kwargs'] = {'model_max_length': args.max_seq_length}
-    tokenizer_cfg = om.create(tokenizer_cfg)
-    tokenizer = build_tokenizer(tokenizer_cfg)
-
-    loader = iter(build_interleaved_dataloader(cfg, tokenizer, device_batch_size))
-    # tokenizer = loader.dataset.tokenizer  # type: ignore
+    tokenizer_args = {
+        "tokenizer_type": args.tokenizer_type,
+        "vocab_file": args.vocab_file,
+        "rank": 0,
+        "model_parallel_size": 1,
+        "make_vocab_size_divisible_by": 128,
+    }
+    class Config:
+        def __init__(self, dictionary):
+            for key, value in dictionary.items():
+                setattr(self, key, value)
+    
+    tokenizer_args = Config(tokenizer_args)
+    # tokenizer_config = om.create(tokenizer_args)
+    tokenizer = build_tokenizer(tokenizer_args)
+    
+    loader = build_interleaved_dataloader(cfg, tokenizer, device_batch_size)
     print("I am ready")
-    print(next(loader))
+    for sample in loader:
+        print(sample)
     for batch_ix, batch in enumerate(loader):
         print('\n')
         print('#' * 20, f'Batch {batch_ix}', '#' * 20)
@@ -412,3 +406,9 @@ if __name__ == '__main__':
         for sample_ix, token_sample in enumerate(batch['input_ids']):
             print('-' * 20, f' Sample {sample_ix} ', '-' * 20)
             print(tokenizer.decode(token_sample))
+
+
+
+'''
+python /p/project/ccstdl/gupta6/multimodal/megatron/data/streaming_dataset/interleaved_text_image/dataloader.py --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --local_path /p/fastdata/mmlaion/hummingbird/hummingbird_dataset --split text_train_chunk1
+'''
