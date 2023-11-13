@@ -9,26 +9,30 @@ from ..utils import recursive_freeze_unfreeze
 from .dinov2.models import vision_transformer as vits
 from .dinov2 import layers
 
-from transformers import AutoImageProcessor, AutoModel
-from .transforms import make_classification_eval_transform
+from open_clip import create_model_and_transforms
 
-class DinoWrapper(nn.Module):
+from .transforms import make_classification_eval_transform, OPEN_CLIP_MEAN, OPEN_CLIP_STD
+from abc import ABC, abstractmethod
+
+class VisionWrapper(nn.Module, ABC):
     def __init__(self, encoder, config):
         super().__init__()
         self.encoder = encoder
         self.config = config
+        self.unfreeze_params = ['LayerNorm']
         self.prepare_encoder()
         self.transform = make_classification_eval_transform()
-    
+        
     def freeze_model(self):
         num_layers_to_unfreeze = self.config.num_layers_to_unfreeze
         # Freeze everything
         self.encoder.requires_grad_(False)
-        # Unfreeze last num_layers_to_unfreeze layers
-        for child_name, child in list(self.encoder.named_modules())[-num_layers_to_unfreeze:]:
-            child.requires_grad_(True)
+        if num_layers_to_unfreeze > 0:
+            # Unfreeze last num_layers_to_unfreeze layers
+            for child_name, child in list(self.encoder.named_modules())[-num_layers_to_unfreeze:]:
+                child.requires_grad_(True)
         # Unfreeze LayerNorm
-        recursive_freeze_unfreeze(self.encoder, param_types=['LayerNorm'], freeze=False)
+        recursive_freeze_unfreeze(self.encoder, param_types=self.unfreeze_params, freeze=False)
         # What about cls token? TODO
     
     def prepare_encoder(self):
@@ -37,6 +41,10 @@ class DinoWrapper(nn.Module):
         if self.config.add_lora:
             add_lora(self.encoder)
     
+    @abstractmethod
+    def get_embeddings(self, *args, **kwargs):
+        pass
+
     def forward(self, x):
         '''
         x: (b, t, c, h, w)
@@ -47,42 +55,35 @@ class DinoWrapper(nn.Module):
         '''
         b, t, c, h, w = x.shape 
         combined_batch = rearrange(x, "b t c h w -> (b t) c h w")
-        preprocessed_vision = self.transform(combined_batch).half().contiguous()
+        preprocessed_vision = self.transform(combined_batch).bfloat16().contiguous() #.half()
         x = rearrange(preprocessed_vision, "(b t) c h w -> b t c h w", b=b, t=t)
         if "vision" in self.config.arch:
-            embeddings = self.encoder(x) # B, N_E, E
+            embeddings = self.get_embeddings(x) # B, N_E, E
         else:
             x = rearrange(x, "b t c h w -> (b t) c h w")
-            embeddings = self.encoder(x) # B*T, N_E, E
+            embeddings = self.get_embeddings(x) # B*T, N_E, E
             embeddings = rearrange(embeddings, "(b t) n_e e -> b (t n_e) e", b=b, t=t)
         return embeddings
 
-    # def forward(self, x):
-    #     '''
-    #     x: (b, t, c, h, w)
-    #     x.shape:
-    #         b=batch size, 
-    #         t=number of frames in each image/video, 
-    #         c=number of channels, h=height, w=width
-    #     '''
-    #     # print(x.shape)
-    #     x = x.squeeze()
-    #     original_device = x.device
-    #     b, t, c, h, w = x.shape 
-    #     if "vision" in self.config.arch:
-    #         embeddings = self.encoder(x) # B, N_E, E
-    #     else:
-    #         x = rearrange(x, "b t c h w -> (b t) c h w")
-    #         # Convert to numpy 
-    #         # x = x.cpu().numpy()
-    #         # x = self.processor(x, return_tensors="pt", padding=True)
-    #         # x = x["pixel_values"].cuda().to(device=original_device)
-    #         embeddings = self.encoder(x) # B*T, N_E, E
-    #         embeddings = rearrange(embeddings, "(b t) n_e e -> b t n_e e", b=b, t=t)
-    #     return embeddings
+class DinoWrapper(VisionWrapper):
 
+    def __init__(self, encoder, config):
+        super().__init__(encoder, config)
+    
+    def get_embeddings(self, x):
+        return self.encoder(x)
 
-def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
+class ClipWrapper(VisionWrapper):
+    
+    def __init__(self, encoder, config):
+        super().__init__(encoder, config)
+        self.transform = make_classification_eval_transform(resize_size=224, mean=OPEN_CLIP_MEAN, std=OPEN_CLIP_STD)
+
+    def get_embeddings(self, x):
+        cls_token, all_embeddings = self.encoder(x)
+        return all_embeddings
+
+def load_pretrained_dino_weights(model, pretrained_weights, checkpoint_key):
     # [TODO] add logger here
     if urlparse(pretrained_weights).scheme:  # If it looks like an URL
         state_dict = torch.hub.load_state_dict_from_url(pretrained_weights, map_location="cpu")
@@ -95,7 +96,6 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
     model.load_state_dict(state_dict, strict=False)
     return model
 
-
 def get_vision_encoder(
     args,
     name,
@@ -104,7 +104,7 @@ def get_vision_encoder(
     """
     Loads vision encoder module, supporting dinov2.
     """
-    if "vit" in name:
+    if "dino" in name:
         vit_kwargs = dict(
             img_size=args.img_size,
             patch_size=args.patch_size,
@@ -116,10 +116,16 @@ def get_vision_encoder(
             # proj_bias=args.proj_bias,
             # ffn_bias=args.ffn_bias,
         )
-        model = vits.__dict__[name](**vit_kwargs)
+        model = vits.__dict__[args.arch](**vit_kwargs)
         if pretrained:
-            model = load_pretrained_weights(model, args.pretrained_weights, "teacher")
+            model = load_pretrained_dino_weights(model, args.pretrained_weights, "teacher")
         encoder = DinoWrapper(model,args)
+    elif "openclip" in name:
+        model, _, _ = create_model_and_transforms(args.arch, pretrained=args.pretrained_data, cache_dir=args.cache_dir)
+        #Todo unsure if preprocess is right - it was two things before...
+        model = model.visual
+        model.output_tokens = True
+        encoder = ClipWrapper(model, args)    
     else:
         raise ValueError(f"vision encoder {name} not recognized")
     return encoder

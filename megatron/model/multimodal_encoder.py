@@ -11,12 +11,14 @@ ENCODER_OUT_DIMS = {
     "dinov2_base": 768, 
     "dinov2_large": 1024, 
     "dinov2_small": 384,
+    "openclip": 768, 
 }
 
 ENCODER_SEQ_LENS = {
     "dinov2_base": 257, 
     "dinov2_large": 257, 
     "dinov2_small": 257,
+    "openclip": 49,
 }
 
 # MultModal Encoder for Vision and Audio 
@@ -44,7 +46,7 @@ class MultiModalEncoder(nn.Module):
         self.config = config
         self.modality = config.modality 
         if self.modality == "vision":
-            self.encoder = get_vision_encoder(config, config.arch, pretrained=config.pretrained)
+            self.encoder = get_vision_encoder(config, config.name, pretrained=config.pretrained)
         # elif self.modality == "audio":
         #     self.encoder = get_audio_encoder(config.encoder_name, load_path=config.load_audio_encoder_path)
         else:
