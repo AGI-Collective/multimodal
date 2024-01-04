@@ -50,6 +50,90 @@ import multiprocessing
 
 from functools import partial
 
+import json
+import tarfile
+import pandas as pd
+
+import random
+
+IMAGE_UNDERSTANDING_TEXT_VARIANTS = [
+("Describe this image", " "),
+("The caption of the image", "is "),
+("The image", "shows "),
+("The image", "depicts "),
+("This illustration", "represents "),
+("The snapshot", "captures "),
+("The scene", "consists of "),
+("In the photo", "is "),
+("This visual", "displays "),
+("A picture of", "has "),
+("The image", "features "),
+("This graphic", "presents "),
+("The image", "consists of "),
+("The representation", "is of "),
+("The photo", "captures "),
+("This depiction", "reveals "),
+("The scene", "shows "),
+("The picture", "represents "),
+("The image", "demonstrates "),
+("In the illustration", "is "),
+("This visual representation", "displays "),
+("The photograph", "features "),
+("The image", "presents "),
+("This snapshot", "depicts "),
+("The artwork", "shows "),
+("The scene", "portrays "),
+("This graphic", "represents "),
+("This picture", "contains "),
+("The image", "portrays "),
+("In this visual", "is "),
+("The illustration", "depicts "),
+("This photo", "shows "),
+("The image", "reveals "),
+("The snapshot", "displays "),
+("This picture", "presents "),
+("The image", "illustrates "),
+("This scene", "features "),
+("The photograph", "represents "),
+("The graphic", "depicts "),
+("This illustration", "displays "),
+("The picture", "demonstrates "),
+("In the image", "is "),
+("The visual", "presents "),
+("This representation", "portrays "),
+("The snapshot", "illustrates "),
+("This photograph", "captures "),
+("Can you describe what's in the image?", " "),
+("What do you see in this picture?", " "),
+("Tell me what's happening in the photo", " "),
+("Explain the scene in the illustration", " "),
+("What does this image represent?", " "),
+("Provide a description of this snapshot", " "),
+("What's going on in this graphic?", " "),
+("Please give a brief summary of the photo", " "),
+("What elements can you identify in this picture?", " "),
+]
+
+IMAGE_GENERATION_TEXT_VARIANTS = [
+("Create an illustration of ", " "),
+("Produce a visual depicting ", " "),
+("Design a picture to show ", " "),
+("Draw an image representing ", " "),
+("Construct a visual representation of ", " "),
+("Make a rendered image of ", " "),
+("Put together a picture showcasing ", " "),
+("Develop a visual piece on ", " "),
+("Render an image about ", " "),
+("Craft an illustration that embodies ", " "),
+("Generate an artistic representation of ", " "),
+("Create a visual render of ", " "),
+("Build a visual image around ", " "),
+("Put out an image illustrating ", " "),
+("Produce a image of ", " "),
+("Devise an image capturing ", " "),
+("Whip up an image showcasing ", " "),
+("Bring into life an image of ", " "),
+]
 
 class ListPIL(Encoding):
     """Store PIL image raw.
@@ -238,6 +322,7 @@ class ConcatTokensDataset(IterableDataset):
         eos_text: str,
         image_start_text: str,
         image_end_text: str,
+        image_gen_start_text: str,
         no_wrap: bool,
         after_image_extra_tokens: int = 10, 
         position_pad_id: int = -1
@@ -255,7 +340,7 @@ class ConcatTokensDataset(IterableDataset):
         self.pad_token_id = self.tokenizer.pad_id
         self.position_pad_id = position_pad_id
         self.should_wrap = not no_wrap
-
+        self.image_gen_start_text = image_gen_start_text
         self.bos_tokens = self.tokenizer.tokenize(self.bos_text)
         if len(self.bos_tokens) > 1:
             warnings.warn(
@@ -329,24 +414,27 @@ class ConcatTokensDataset(IterableDataset):
                 assert (text != None and image == None) or (text == None and image != None), "Text and image are both none or both not None in the same sample"
 
                 if text != None and image == None:
-                    # Fix saving the missing/original part of the text
-                    if current_length + len(text) > self.max_length: # Too long, that's fine for text, just grab what we can
-                        text_append = text[:self.max_length-current_length] # Changes the actual list in the thing
-                        self.text_buffer[0] = text[self.max_length-current_length:]
-                        # We do NOT pop an image here because we haven't finished the current text
-                        # We also naturally do not pop text.
+                    if self.image_gen_start_text in text and current_length + len(text) > self.max_length:
                         current_length = self.max_length
-                        
-                    else: # Not greater, remove entire text and entire image
-                        text_append = self.text_buffer.pop(0)
-                        self.image_buffer.pop(0)#Just remove the None for image
-                        current_length += len(text_append)
-                        
-                    curr_text.extend(text_append)
-                    curr_image.append(None)
+                    else:
+                        # Fix saving the missing/original part of the text
+                        if current_length + len(text) > self.max_length: # Too long, that's fine for text, just grab what we can
+                            text_append = text[:self.max_length-current_length] # Changes the actual list in the thing
+                            self.text_buffer[0] = text[self.max_length-current_length:]
+                            # We do NOT pop an image here because we haven't finished the current text
+                            # We also naturally do not pop text.
+                            current_length = self.max_length
+                            
+                        else: # Not greater, remove entire text and entire image
+                            text_append = self.text_buffer.pop(0)
+                            self.image_buffer.pop(0)#Just remove the None for image
+                            current_length += len(text_append)
+                            
+                        curr_text.extend(text_append)
+                        curr_image.append(None)
                     
                 elif text == None and image != None:
-                    if current_length + self.image_seq_length + 2 + self.after_image_extra_tokens > self.max_length: # TODO: Make sure there is text remaining from current sample
+                    if current_length + self.image_seq_length + 2 + self.after_image_extra_tokens > self.max_length: # TODO: Make sure there is text remaining from current sample. Make sure in cases like grounding boxes and seed tokens, things dont break off in the middle 
                         current_length = self.max_length
                         
                     else: # So this includes that EOS case...
@@ -412,6 +500,236 @@ class ConcatMode(Enum):
     NO_CONCAT = 'NO_CONCAT'
     CONCAT_TOKENS = 'CONCAT_TOKENS'
 
+def get_bin_number(width, height, bins, x, y):
+    """
+    Get the bin number from the point 2D coordinates
+
+    Parameters:
+    width: the width of the image
+    height: the height of the image
+    bins: the number of bins per axis
+    x: the x-coordinate of the point
+    y: the y-coordinate of the point
+
+    Return:
+    bin_number: the bin number containing (x, y)
+    """
+
+    # Step 1: Calculate the width and height of each bin
+    bin_width = width / bins
+    bin_height = height / bins
+
+    # Step 2: Determine the bin number in x-axis and y-axis
+    bin_x = int(x // bin_width)
+    bin_y = int(y // bin_height)
+
+    # Account for edge cases where x or y equals width or height
+    if x == width:
+        bin_x -= 1
+    if y == height:
+        bin_y -= 1
+
+    # Step 3: Combine the bin_x and bin_y to get the bin number
+    # Numbering is from top to bottom, and then from left to right
+    bin_number = bin_y * bins + bin_x
+    
+    return bin_number
+
+class GritDatasetGeneration(IterableDataset):
+    def __init__(self, path, group):
+        start, end = group
+        fpath = f"{path}/{{{str(start).zfill(5)}..{str(end).zfill(5)}}}.tar"
+        self.dataset = wds.WebDataset(fpath).decode("pilrgb").rename(image="jpg;png;jpeg;webp", text="txt", json="json").to_tuple("image", "text", "json")
+
+    def __iter__(self):
+        for sample in self.dataset:
+            sample_json = sample[2]
+            text = sample_json["caption"]
+            image = sample[0]
+            image = torchvision.transforms.functional.resize(image, [224, 224], interpolation=InterpolationMode.BICUBIC)
+            image_list = [image, None]
+            text_list = [None, "<|grounding|>"]
+            
+            # sort ref expressions based on the first value
+            sample_json['ref_exps'].sort(key=lambda x: x[0])
+            i = 1
+            while i < len(sample_json['ref_exps']):
+                if sample_json['ref_exps'][i][0] < sample_json['ref_exps'][i - 1][1]:
+                    # remove this ref exp
+                    sample_json['ref_exps'].pop(i)
+                else:
+                    i += 1
+
+            last_text_index = 0
+            for ref_exp in sample_json['ref_exps']:
+                start_text = int(ref_exp[0])
+                end_text = int(ref_exp[1])
+
+                if start_text > last_text_index:
+                    text_list.append(text[last_text_index:start_text])
+                    image_list.append(None)
+                
+                top_left = [ref_exp[2], ref_exp[3]]
+                bottom_right = [ref_exp[4], ref_exp[5]]
+
+                top_left[0] = int(top_left[0]  * 224)
+                top_left[1] = int(top_left[1]  * 224)
+                bottom_right[0] = int(bottom_right[0]  * 224)
+                bottom_right[1] = int(bottom_right[1]  * 224)
+
+                top_left_bin = get_bin_number(224, 224, 32, top_left[0], top_left[1])
+                bottom_right_bin = get_bin_number(224, 224, 32, bottom_right[0], bottom_right[1])
+
+                referring_expression = text[start_text:end_text]
+                text_list.append("<|p|>")
+                text_list.append(referring_expression)
+                text_list.append("<|/p|>")
+                text_list.append("<|box|>")
+                text_list.append(f"<|box_{top_left_bin}|>")
+                text_list.append(f"<|box_{bottom_right_bin}|>")
+                text_list.append("<|/box|>")
+                # extend image list with 7 nones
+                image_list.extend([None] * 7)
+                last_text_index = end_text
+            if last_text_index < len(text):
+                text_list.append(text[last_text_index:])
+                image_list.append(None)
+            assert len(text_list) == len(image_list)
+            yield {
+                "images": image_list,
+                "text": text_list
+            }
+            
+class MMC4InterleavedDataset(IterableDataset):
+    def __init__(self, path, group):
+        start, end = group
+        self.jsonl_paths = []
+        for i in range(start, end):
+            self.jsonl_paths.append(os.path.join(path, f"docs_shard_{i}_v2.jsonl"))
+            
+    def __iter__(self):
+        for jsonl_path in self.jsonl_paths:
+
+            jsonl_file_name = os.path.basename(jsonl_path)
+            tar_file_name = jsonl_file_name.replace("docs_", "").replace("_v2.jsonl", "_images_v2.tar")
+            tar_path = os.path.join("/p/fastdata/mmlaion/mmc4/images", tar_file_name)
+            tar_file_name = tar_file_name.replace(".tar", "")
+            with tarfile.open(tar_path) as tar:
+                with open(jsonl_path) as f:
+                    for line in f:
+                        curr_json = json.loads(line)
+                        text_list = curr_json["text_list"]
+                        image_info_list = curr_json["image_info"]
+                        for image_info in image_info_list:
+                            image_path_name = image_info["image_name"]
+                            matching_index = image_info["matched_text_index"]
+                            image_path_name = os.path.join(tar_file_name, image_path_name)                            
+                            file = tar.extractfile(image_path_name)
+                            image_data = file.read()    
+
+                            # Create a BytesIO object and load the image data
+                            image = Image.open(io.BytesIO(image_data))
+                            if image.mode != 'RGB':
+                                image = image.convert('RGB')
+                            
+                            image = torchvision.transforms.functional.resize(image, [224, 224], interpolation=InterpolationMode.BICUBIC)
+                            
+
+                            text_list.insert(matching_index+1, image)
+                        
+                        final_text_list = []
+                        final_image_list = []
+                        for item in text_list:
+                            if isinstance(item, str):
+                                final_text_list.append(item)
+                                final_image_list.append(None)
+                            else:
+                                final_image_list.append(item)
+                                final_text_list.append(None)
+                        yield {
+                            "images": final_image_list,
+                            "text": final_text_list
+                        }
+
+class SEEDGenerationDataset(IterableDataset):
+    def __init__(self, path, group, image_gen_start_text, image_gen_end_text):
+        # List all jsonl files in the folder mentioned by path:
+        all_json_ls = glob(path + "split_2B-en-*.jsonl")
+        # Sort the list of jsonl files:
+        all_json_ls.sort()
+        # Get the start and end indices of the group:
+        start, end = group
+        # Get the jsonl files in the group:
+        if end > len(all_json_ls):
+            end = len(all_json_ls)
+        self.paths = all_json_ls[start:end]
+        self.image_gen_start_text = image_gen_start_text
+        self.image_gen_end_text = image_gen_end_text
+            
+    def __iter__(self):
+        for jsonl_path in self.paths:
+            with open(jsonl_path) as f:
+                for line in f:
+                    curr_json = json.loads(line)
+                    text = curr_json["caption"]
+                    seed_tokens = curr_json["seed"]
+                    generation_caption = random.choice(IMAGE_GENERATION_TEXT_VARIANTS)
+                    text_portion = generation_caption[0] + text + generation_caption[1]
+                    for seed_token in seed_tokens:
+                        text_portion+=f'<|seed_{seed_token}|>'
+                    text_portion += self.image_gen_end_text
+                    text_list = [text_portion]
+                    image_list = [None]
+                    yield {
+                        "images": image_list,
+                        "text": text_list
+                    }
+
+class InterleavedSEEDGenerationDataset(IterableDataset):
+    def __init__(self, path, group):
+        self.parquet_folder_list = []
+        start, end = group
+        for i in range(start, end):
+            first_digit = i//4+1
+            second_digit = i%4+1
+            self.parquet_folder_list.append(path + "/split_2B-en-4_5_" + str(first_digit) + "_parquet_" + str(second_digit) + "_parquet")
+        # pass
+        self.seed_folder_path = '/p/scratch/ccstdl/chen24/datasets/laion2b_seed/'
+
+
+    def __iter__(self):
+        for parquet_folder in self.parquet_folder_list:
+            # Get the brace notation of all available tar files 
+            tar_files = glob(parquet_folder + "/*.tar")
+            # brace notation
+            brace_notation = "{" + ",".join(tar_files) + "}"
+            # Get complete path
+            dataset = wds.WebDataset(brace_notation).decode("pilrgb").rename(image="jpg;png;jpeg;webp", text="txt", id="__key__").to_tuple("image", "text", "id")
+            seed_dataset_path = self.seed_folder_path + os.path.basename(parquet_folder) + ".jsonl"
+            seed_dataset = pd.read_json(seed_dataset_path, lines=True)
+            # make the key as the index
+            seed_dataset = seed_dataset.set_index('key')
+            # convert index to str
+            seed_dataset.index = seed_dataset.index.map(str)
+            for sample in dataset:
+                image, text, id = sample
+                image = torchvision.transforms.functional.resize(image, [224, 224], interpolation=InterpolationMode.BICUBIC)
+                # search sample in seed dataset based on id
+                id = id.lstrip('0')
+                sample = seed_dataset.loc[id]
+                generation_caption = random.choice(IMAGE_GENERATION_TEXT_VARIANTS)
+                text_list = [generation_caption[0], text, "<|image_gen_start|>"]
+                image_list = [None, None, None]
+                for seed_token in sample['seed']:
+                    text_list.append(f'<|seed_{seed_token}|>')
+                    image_list.append(None)
+                text_list.append("<|image_gen_end|>")
+                image_list.append(None)
+                yield {
+                    "images": image_list,
+                    "text": text_list
+                }
+
 class TextConcatDataset(IterableDataset):
     def __init__(self, path, group):
         # List all jsonl files in the folder mentioned by path:
@@ -421,10 +739,13 @@ class TextConcatDataset(IterableDataset):
         # Get the start and end indices of the group:
         start, end = group
         # Get the jsonl files in the group:
+        if end > len(all_json_ls):
+            end = len(all_json_ls)
         self.paths = all_json_ls[start:end]
 
     def __iter__(self):
         for fname in self.paths:
+            print("Processing file: ", fname)
             for doc in filter(lambda x: x, lmd.Reader(fname).stream_data()):
                 sample = {
                     "images": [None],
@@ -446,9 +767,10 @@ class ImageCaptionDataset(IterableDataset):
                 if text is None:
                     print("key 'text' not found in the sample, skipping this datapoint")
                     continue
+                text_understanding_caption = random.choice(IMAGE_UNDERSTANDING_TEXT_VARIANTS)
                 yield {
-                    "images": [None, image],
-                    "text": [text, None]
+                    "images": [None, image, None, None],
+                    "text": [text_understanding_caption[0], None, text_understanding_caption[1], text]
                 }
             except StopIteration:
                 break
@@ -468,6 +790,8 @@ def build_interleaved_multimodal_dataset(
     eos_text: str = '',
     image_start_text: str = '<|image_start|>',
     image_end_text: str = '<|image_end|>',
+    image_gen_start_text: str = '<|image_gen_start|>',
+    image_gen_end_text: str = '<|image_gen_end|>',
     no_wrap: bool = False,
     tokenizer = None,
     vision_seq_length: int = 64,
@@ -491,8 +815,11 @@ def build_interleaved_multimodal_dataset(
         An IterableDataset.
     """
 
-    dataset = ImageCaptionDataset(path, group)
+    # dataset = ImageCaptionDataset(path, group)
     # dataset = TextConcatDataset(path, group)
+    dataset = MMC4InterleavedDataset(path, group)
+    # dataset = SEEDGenerationDataset(path, group, image_gen_start_text, image_gen_end_text)
+    # dataset = GritDatasetGeneration(path, group)
 
     if mode == ConcatMode.NO_CONCAT:
         dataset = NoConcatDataset(dataset)
@@ -520,6 +847,7 @@ def build_interleaved_multimodal_dataset(
             eos_text=eos_text,
             image_start_text=image_start_text,
             image_end_text=image_end_text,
+            image_gen_start_text=image_gen_start_text,
             no_wrap=no_wrap, 
             after_image_extra_tokens=after_image_extra_tokens,
             position_pad_id=position_pad_id
@@ -549,6 +877,8 @@ def data_generator(task_queue, data_queue, args, worker_id):
                                 eos_text=tokenizer.eos_text,
                                 image_start_text=tokenizer.image_start_text,
                                 image_end_text=tokenizer.image_end_text,
+                                image_gen_start_text=tokenizer.image_gen_start_text,
+                                image_gen_end_text=tokenizer.image_gen_end_text,
                                 no_wrap=args.no_wrap,
                                 tokenizer=tokenizer, 
                                 vision_seq_length=args.vision_seq_length,
@@ -583,6 +913,8 @@ def data_writer(data_queue, args, index):
                 total_images += len(sample["images"])
                 out.write(sample)
                 print(f'\rWriter {index} Writing sample {total_samples} with {total_images} images.........', flush=True, end='')
+                if total_samples > 3000:
+                    break
             except multiprocessing.queues.Empty:
                 print(f'\rNo more data to write. Exiting. {index}')
                 break
@@ -615,6 +947,21 @@ def main(args: Namespace) -> None:
     print(f'It will finish at a value below 100% if tokenizing')
 
     dataset_group_iterator = get_dataset_groups(args.start_ind, args.end_ind, args.num_groups)
+
+    # args.rank = 0
+    # args.model_parallel_size = 1
+    # args.make_vocab_size_divisible_by = 128
+    # tokenizer = build_tokenizer(args)
+    # tokenizer.tokenizer.add_special_tokens([f'<|p|>'])
+    # tokenizer.tokenizer.add_special_tokens([f'<|/p|>'])
+    # tokenizer.tokenizer.add_special_tokens([f'<|box|>'])
+    # tokenizer.tokenizer.add_special_tokens([f'<|/box|>'])
+    # tokenizer.tokenizer.add_special_tokens([f'<|grounding|>'])
+
+    # for i in range(1024):
+    #     tokenizer.tokenizer.add_special_tokens([f'<|box_{i}|>'])
+    # tokenizer.tokenizer.save("/p/project/ccstdl/gupta6/multimodal/20B_tokenizer_new.json")
+    # exit()
 
     task_queue = multiprocessing.Queue()
     for index_range in dataset_group_iterator:
@@ -662,10 +1009,10 @@ def parse_args() -> Namespace:
     parser.add_argument('--queue_size', type=int, default=5000)
     parser.add_argument('--split', type=str, default='train')
     parser.add_argument('--num_groups', type=int, default=100)
-    parser.add_argument('--workers', type=int, default=24)
-    parser.add_argument('--num_writers', type=int, default=10)
-    parser.add_argument('--start_ind', type=int, default=0)
-    parser.add_argument('--end_ind', type=int, default=41455)
+    parser.add_argument('--workers', type=int, default=80) # 44
+    parser.add_argument('--num_writers', type=int, default=40) # 2
+    parser.add_argument('--start_ind', type=int, default=250)
+    parser.add_argument('--end_ind', type=int, default=6000) #150
     parser.add_argument('--tokenizer_type', type=str, required=False, default=None)
     parser.add_argument('--vocab_file', type=str, required=False, default=None)
     parser.add_argument('--merge_file', type=str, required=False, default=None)
@@ -695,10 +1042,16 @@ def parse_args() -> Namespace:
 if __name__ == '__main__':
     main(parse_args())
 
-
 '''
-python create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/red_pajama_raw/arxiv/arxiv_0af50072-df4c-4084-a833-cebbd046e70e.jsonl --compression zstd --concat_tokens 2048 --tokenizer EleutherAI/gpt-neox-20b --eos_text '<|endoftext|>' --out_root /p/fastdata/mmlaion/hummingbird/test_laion400M/test7
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/laion-400m/LAION-400m-webdataset/data --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/laion_400m_train
 
-python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/red_pajama_raw/arxiv --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/text_train_final
-python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/laion2B-en --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/laion_5b_test
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/mmc4/unzipped_docs/ --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/mmc4_train
+
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/EVOBITS --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/seed_train
+
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/scratch/ccstdl/chen24/datasets/laion2b_seed/ --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/seed_train
+
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/grit --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/grit_train
+
+python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk1 --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1
 '''

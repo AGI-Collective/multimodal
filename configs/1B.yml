@@ -6,54 +6,37 @@
   "model_parallel_size": 1,
 
   # model settings
-  "num_layers": 24,
-  "hidden_size": 2048,
-  "num_attention_heads": 16,
-  "seq_length": 2048,
-  "max_position_embeddings": 2048,
-  "pos_emb": "rotary",
+  "num-layers": 16,
+  "hidden-size": 2048,
+  "num-attention-heads": 8,
+  "seq-length": 2048,
+  "max-position-embeddings": 2048,
+  "pos-emb": "rotary",
   "rotary-pct": 0.25,
-  "no_weight_tying": true,
-  "gpt_j_residual": true,
-  "output_layer_parallelism": "column",
-
-  # "vision_encoder_args": {
-  #   "name": "dino",
-  #   "arch": "vit_base", 
-  #   "modality": "vision",
-  #   "patch_size": 14,
-  #   "drop_path_rate": 0.4,
-  #   "ffn_layer": "swiglufused",
-  #   "block_chunks": 4,
-  #   "img_size": 518,
-  #   "pretrained_weights": '/p/scratch/ccstdl/gupta6/dinov2/dinobase.pt',
-  #   "freeze_encoder": True,
-  #   "add_lora": False,
-  #   "pretrained": True,
-  #   "encoder_type": "dinov2_base",
-  #   "embed_dropout_prob": 0.1,
-  #   "use_embed_layernorm": True,
-  #   "perceiver_seq_length": 64,
-  #   "num_layers_to_unfreeze": 2,
-  # },
+  "no-weight-tying": true,
+  "gpt-j-residual": true,
+  "output-layer-parallelism": "column",
 
   "vision_encoder_args": {
-    "name": "openclip",
-    "arch": "ViT-B-32", 
+    "arch": "vit_base", 
     "modality": "vision",
-    "pretrained_data": "laion2b_s34b_b79k",
-    "cache_dir": '/p/scratch/ccstdl/gupta6/openclip/vitb32.pt',
+    "patch_size": 14,
+    "drop_path_rate": 0.4,
+    "ffn_layer": "swiglufused",
+    "block_chunks": 4,
+    "img_size": 518,
+    "pretrained_weights": '/p/scratch/ccstdl/gupta6/dinov2/dinobase.pt',
     "freeze_encoder": True,
-    "add_lora": True,
-    "pretrained": True,
-    "encoder_type": "openclip",
+    "add_lora": False,
+    "pretrained": False,
+    "encoder_type": "dinov2_base",
     "embed_dropout_prob": 0.1,
     "use_embed_layernorm": True,
     "perceiver_seq_length": 64,
-    "num_layers_to_unfreeze": 2,
+    "num_layers_to_unfreeze": 0,
   },
 
-  "attention-config": [[["flash"], 24]],
+  "attention-config": [[["flash"], 16]],
 
   # these should provide some speedup but takes a while to build, set to true if desired
   "scaled_upper_triang_masked_softmax_fusion": true,
@@ -67,57 +50,22 @@
   "optimizer": {
     "type": "Adam",
     "params": {
-      "lr": 0.0002,
+      "lr": 0.00025,
       "betas": [0.9, 0.95],
       "eps":  1.0e-8,
     }
   },
-  "min_lr": 0.00002,
+  "min_lr": 0.000025,
 
-  "lr_param_groups_config": {
-    "image_encoder.encoder":{
-      "decay_style" : "cosine",
-      "start_lr": 0.0002,
-      "min_lr": 0.00002,
-      "warmup_iter": 860,
-      "end_iter": 4300,
-    },
-    "input_layernorm":{
-      "decay_style" : "cosine",
-      "start_lr": 0.0002,
-      "min_lr": 0.00002,
-      "warmup_iter": 860,
-      "end_iter": 4300,
-    },
-    "attention":{
-      "decay_style" : "cosine",
-      "start_lr": 0.0002,
-      "min_lr": 0.00002,
-      "warmup_iter": 860,
-      "end_iter": 4300,
-    },
-    "post_attention_layernorm":{
-      "decay_style" : "cosine",
-      "start_lr": 0.0002,
-      "min_lr": 0.00002,
-      "warmup_iter": 860,
-      "end_iter": 4300,
-    },
-    "mlp.dense_h_to_4h":{
-      "decay_style" : "cosine",
-      "start_lr": 0.0002,
-      "min_lr": 0.00002,
-      "warmup_iter": 860,
-      "end_iter": 4300,
-    },
-    # "27.":{
-    #   "decay_style" : "cosine",
-    #   "start_lr": 0.0002,
-    #   "min_lr": 0.00002,
-    #   "warmup_iter": 860,
-    #   "end_iter": 4300,
-    # },
-  },
+  # "lr_param_groups_config": {
+  #   "image_encoder.encoder":{
+  #     "decay_style" : "cosine",
+  #     "start_lr": 0.0002,
+  #     "min_lr": 0.00002,
+  #     "warmup_iter": 600,
+  #     "end_iter": 5000,
+  #   }
+  # },
 
   # for all zero_optimization options, see https://www.deepspeed.ai/docs/config-json/#zero-optimizations-for-fp16-training
   "zero_optimization": {
@@ -172,13 +120,13 @@
 
 
   # misc. training settings
-  "train_iters": 4300,
-  "lr_decay_iters": 4300,
+  "train_iters": 5000,
+  "lr_decay_iters": 5000,
   "distributed_backend": "nccl",
   "lr_decay_style": "cosine",
   "warmup": 0.01,
   "checkpoint_factor": 1000,
-  "eval_interval": 200,
+  "eval_interval": 100,
   "eval_iters": 10,
 
   # logging

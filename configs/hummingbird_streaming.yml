@@ -1,0 +1,145 @@
+{
+  train_streaming_data_config: {
+    'name': 'text',
+    'dataset': {
+        'batching_method': 'stratified',
+        'streams':{
+            laion400M:{ # 154980
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "laion_400m_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.1,
+            },            
+            arxiv:{ # 610000
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "text_train_chunk1",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.4,
+            },  
+            mmc4:{ # 3850
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "mmc4_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.2,
+            },            
+            seed:{  # 79200
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "seed_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.2,
+            }, 
+            grit:{  # 45360
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "grit_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.1,
+            }, 
+        }
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_testing1",
+    'drop_last': True,
+  },
+
+  valid_streaming_data_config: [
+    {
+    'name': 'text', 
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "laion_400m_validation",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'drop_last': True,
+    'epoch_size': 40000,
+    },
+    {
+    'name': 'text', 
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "text_val_chunk1",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'drop_last': True,
+    'epoch_size': 40000,
+    },
+    {
+    'name': 'text', 
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "mmc4_val",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'drop_last': True,
+    'epoch_size': 40000,
+    },
+    {
+    'name': 'text', 
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "seed_val",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'drop_last': True,
+    'epoch_size': 40000,
+    },
+    {
+    'name': 'text', 
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "grit_val",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'drop_last': True,
+    'epoch_size': 40000,
+    }
+    
+  ],
+
+  test_streaming_data_config: {
+    'name': 'text',
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+        'split': "text_val_chunk1",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'drop_last': True,
+    'epoch_size': 40000,
+  },
+  
+  # If weight_by_num_documents is True, Builds dataset weights from a multinomial distribution over groups of data according to the number of documents in each group.
+  # WARNING: setting this to True will override any user provided weights
+  # "weight_by_num_documents": false,
+  # "weighted_sampler_alpha": 0.3,
+
+  "tokenizer-type": "HFTokenizer",
+  "vocab-file": "/p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json",
+  "position_pad_id": -1,
+
+  "save": "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/model/hb_testing1",
+  "load": "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/model/hb_testing1", # "/p/fastdata/mmlaion/hummingbird/checkpoints/1_4_expanded_neox", #"/p/fastdata/mmlaion/hummingbird/checkpoints/1_neox",
+  "checkpoint_validation_with_forward_pass": False,
+
+  "tensorboard-dir": "/p/fastdata/mmlaion/hummingbird/runs/tensorboard/hb_testing1",
+  "log-dir": "/p/fastdata/mmlaion/hummingbird/runs/logs/hb_testing1",
+  "use_wandb": True,
+  "wandb_host": "https://api.wandb.ai",
+  "wandb_project": "hummingbird",
+  "wandb_dir": "/p/fastdata/mmlaion/hummingbird/runs/wandb/hb_testing1",
+  "no_ssh_check": True,
+  "num_workers": 1,
+
+  "vision_seq_length": 64,
+  # "finetune": True,
+  # "concat"
+} 
+

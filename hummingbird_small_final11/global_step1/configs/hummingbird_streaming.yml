@@ -1,0 +1,72 @@
+{
+  train_streaming_data_config: {
+    'name': 'text',
+    'dataset': {
+        'batching_method': 'stratified',
+        'streams':{
+            laion400M:{
+              'local': "/p/fastdata/mmlaion/hummingbird/hb_streaming",
+              'split': "laion_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.2,
+            },            
+            arxiv:{
+              'local': "/p/fastdata/mmlaion/hummingbird/hb_streaming",
+              'split': "text_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.8
+            }
+        }
+    },
+    'state_dict_path': "/p/project/ccstdl/gupta6/multimodal/state_dicts/train",
+    'drop_last': True,
+  },
+
+  valid_streaming_data_config: {
+    'name': 'text',
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hb_streaming",
+        'split': "laion_validation",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'state_dict_path': "/p/project/ccstdl/gupta6/multimodal/state_dicts/validation",
+    'drop_last': True,
+  },
+
+  test_streaming_data_config: {
+    'name': 'text',
+    'dataset': {
+        'local': "/p/fastdata/mmlaion/hummingbird/hb_streaming",
+        'split': "laion_test",
+        'shuffle': False,
+        'keep_zip': True,  # in case we need compressed files after testing
+    },
+    'drop_last': True,
+  },
+  
+  # If weight_by_num_documents is True, Builds dataset weights from a multinomial distribution over groups of data according to the number of documents in each group.
+  # WARNING: setting this to True will override any user provided weights
+  # "weight_by_num_documents": false,
+  # "weighted_sampler_alpha": 0.3,
+
+  "tokenizer-type": "HFTokenizer",
+  "vocab-file": "/p/project/ccstdl/gupta6/gpt-neox/data/20B_tokenizer.json",
+  "position_pad_id": -1,
+
+  "save": "hummingbird_small_final11",
+  "load": "hummingbird_small_final11",
+  "checkpoint_validation_with_forward_pass": False,
+
+  "tensorboard-dir": "tensorboard/hummingbird_small_final5",
+  "log-dir": "logs/hummingbird_small_final5",
+  "use_wandb": False,
+  "wandb_host": "https://api.wandb.ai",
+  "wandb_project": "hummingbird",
+  "no_ssh_check": True,
+  "num_workers": 5,
+
+  "vision_seq_length": 64,
+  # "concat"
+}
+
