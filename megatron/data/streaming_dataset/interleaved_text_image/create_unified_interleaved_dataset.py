@@ -125,24 +125,24 @@ IMAGE_UNDERSTANDING_TEXT_VARIANTS = [
 ]
 
 IMAGE_GENERATION_TEXT_VARIANTS = [
-("Create an illustration of ", " "),
-("Produce a visual depicting ", " "),
-("Design a picture to show ", " "),
-("Draw an image representing ", " "),
-("Construct a visual representation of ", " "),
-("Make a rendered image of ", " "),
-("Put together a picture showcasing ", " "),
-("Develop a visual piece on ", " "),
-("Render an image about ", " "),
-("Craft an illustration that embodies ", " "),
-("Generate an artistic representation of ", " "),
-("Create a visual render of ", " "),
-("Build a visual image around ", " "),
-("Put out an image illustrating ", " "),
-("Produce a image of ", " "),
-("Devise an image capturing ", " "),
-("Whip up an image showcasing ", " "),
-("Bring into life an image of ", " "),
+("Create an illustration of ", ""),
+("Produce a visual depicting ", ""),
+("Design a picture to show ", ""),
+("Draw an image representing ", ""),
+("Construct a visual representation of ", ""),
+("Make a rendered image of ", ""),
+("Put together a picture showcasing ", ""),
+("Develop a visual piece on ", ""),
+("Render an image about ", ""),
+("Craft an illustration that embodies ", ""),
+("Generate an artistic representation of ", ""),
+("Create a visual render of ", ""),
+("Build a visual image around ", ""),
+("Put out an image illustrating ", ""),
+("Produce a image of ", ""),
+("Devise an image capturing ", ""),
+("Whip up an image showcasing ", ""),
+("Bring into life an image of ", ""),
 ]
 
 class ListPIL(Encoding):
@@ -195,6 +195,8 @@ def check_image(image, min_image_size=0, max_image_area=float("inf"), max_aspect
         return False
     return True 
 
+DIMENSIONS = [(1, 1), (2, 2), (1, 2), (1, 3), (1, 4), (2, 1), (3, 1), (4, 1)]
+MAX_SPLITS = 4
 
 def split_images_fn(image, box_length):
     # Loading the image 
@@ -202,7 +204,7 @@ def split_images_fn(image, box_length):
     width, height = image.size
 
     # Scaling the image to fit box_length 
-    dimensions = [(1, 1), (2, 2), (1, 2), (1, 3), (1, 4), (2,1), (3, 1), (4, 1)]
+    dimensions = DIMENSIONS
     original_aspect_ratio = width / height
     scaled_configurations = [
         {
@@ -285,8 +287,10 @@ class ConcatTokensDataset(IterableDataset):
         bos_text: str,
         eos_text: str,
         image_start_text: str,
+        image_end_text: str,
         no_wrap: bool,
-        after_image_extra_tokens: int = 10, 
+        after_image_extra_tokens: int = 32, 
+        before_image_extra_tokens: int = 32,
         position_pad_id: int = -1
     ):
         self.dataset = dataset
@@ -295,7 +299,9 @@ class ConcatTokensDataset(IterableDataset):
         self.max_length = max_length
         self.image_seq_length = image_seq_length
         self.image_start_text = image_start_text
-        self.after_image_extra_tokens = after_image_extra_tokens    
+        self.image_end_text = image_end_text
+        self.after_image_extra_tokens = after_image_extra_tokens   
+        self.before_image_extra_tokens =  before_image_extra_tokens
         self.bos_text = bos_text
         self.eos_text = eos_text
         self.pad_token_id = self.tokenizer.pad_id
@@ -316,7 +322,7 @@ class ConcatTokensDataset(IterableDataset):
                 , instead we got {self.eos_tokens}. Quit if this was in error.')
         
         self.image_start_token = self.tokenizer.tokenize(self.image_start_text)[0]
-        
+        self.image_end_token = self.tokenizer.tokenize(self.image_end_text)[0]
         eos_text_provided = self.eos_text != ''
         bos_text_provided = self.bos_text != ''
         test_text = self.tokenizer.tokenize('')
@@ -372,29 +378,42 @@ class ConcatTokensDataset(IterableDataset):
 
                 assert (text != None and image == None) or (text == None and image != None), "Text and image are both none or both not None in the same sample"
 
+                def calculate_image_splits(image_buffer, index):
+                    image_splits = 0
+                    cur_i = index
+                    while image_buffer[cur_i] != None:
+                        image_splits += 1
+                        cur_i += 1
+                    return image_splits
+                
                 if text != None and image == None:
-                    # find the index of image_start_token
-                    if self.image_start_token in text and current_length + text.index(self.image_start_token) + self.seed_token_length + 2 > self.max_length: # FIX NOW TODO
+                    # Fix saving the missing/original part of the text
+                    index_to_add_till = len(text)
+                    if self.image_start_token in text:
+                        image_ind = text.index(self.image_start_token)
+                        if (current_length + image_ind +  self.seed_token_length + self.image_seq_length*calculate_image_splits(self.image_buffer, 1) + 2 + self.after_image_extra_tokens) > self.max_length:
+                            if text[0] == self.image_end_token:
+                                balance = 1
+                            else:
+                                balance = 0
+                            index_to_add_till = max(balance, image_ind - self.before_image_extra_tokens) # Add max number of tokens possible (with minimum 1 (image end token) if the previous one was an image)
+                    
+                    if current_length + len(text) > self.max_length: # Too long, that's fine for text, just grab what we can
+                        index_to_add_till = min(index_to_add_till, self.max_length - current_length)
+
+                    if index_to_add_till < len(text):
+                        text_append = text[:index_to_add_till]
+                        self.text_buffer[0] = text[index_to_add_till:] # We do NOT pop an image here because we haven't finished the current text
                         current_length = self.max_length
                     else:
-                        # Fix saving the missing/original part of the text
-                        if current_length + len(text) > self.max_length: # Too long, that's fine for text, just grab what we can
-                            text_append = text[:self.max_length-current_length] # Changes the actual list in the thing
-                            self.text_buffer[0] = text[self.max_length-current_length:]
-                            # We do NOT pop an image here because we haven't finished the current text
-                            # We also naturally do not pop text.
-                            current_length = self.max_length
-                            
-                        else: # Not greater, remove entire text and entire image
-                            text_append = self.text_buffer.pop(0)
-                            self.image_buffer.pop(0)#Just remove the None for image
-                            current_length += len(text_append)
-                            
-                        curr_text.extend(text_append)
-                        curr_image.append(None)
+                        text_append = self.text_buffer.pop(0)
+                        self.image_buffer.pop(0) 
+                        current_length += len(text_append)    
+                    curr_text.extend(text_append)
+                    curr_image.append(None)
                     
                 elif text == None and image != None:
-                    if current_length + self.image_seq_length + self.after_image_extra_tokens > self.max_length: # TODO: Make sure there is text remaining from current sample. Make sure in cases like grounding boxes and seed tokens, things dont break off in the middle 
+                    if current_length + self.image_seq_length*calculate_image_splits(self.image_buffer, 0) + self.after_image_extra_tokens + 1 > self.max_length: # TODO: Make sure in cases like grounding boxes things dont break off in the middle 
                         current_length = self.max_length
                         
                     else: # So this includes that EOS case...
@@ -504,7 +523,6 @@ class OBELICSDataset(IterableDataset):
             
     def __iter__(self):
         for parquet in self.parquets:
-            
             image_folder = parquet.replace("/p/fastdata/mmlaion/OBELICS_parquet", f"{self.images_path}/")
             image_folder = image_folder.replace(".parquet", "")
             original_df = pd.read_parquet(parquet)
@@ -513,17 +531,10 @@ class OBELICSDataset(IterableDataset):
             converted_df = converted_df.set_index('images')
             for idx, row in tqdm(original_df.iterrows()):
                 images = row['images']
-                print(images, row['texts'])
                 final_images = []
                 final_texts = []
                 assert len(images) == len(row['texts'])
                 for i, image_url in enumerate(images):
-                    if i>0 and images[i-1] is not None:
-                        if row['texts'][i] is not None:
-                            row['texts'][i] = self.image_end_text + " " + row['texts'][i]
-                        else:
-                            final_images.append(None)
-                            final_texts.append(self.image_end_text + " ")
 
                     if image_url is None:
                         final_images.append(None)
@@ -533,10 +544,16 @@ class OBELICSDataset(IterableDataset):
                     if i == 0:
                         final_images.append(None)
                         final_texts.append("")
-
-                    
                     
                     row_number = converted_df.index.get_loc(image_url)
+                    # if row number is array then use the first element, else if its slice then use the start of the slice
+                    if isinstance(row_number, np.ndarray):  
+                        row_number = row_number[0]                        
+                    elif isinstance(row_number, slice):
+                        row_number = row_number.start
+                    else:
+                        row_number = row_number
+
                     shard_id = row_number // 10000
                     idx_in_shard = row_number % 10000
                     image_id = f'{shard_id:05d}{idx_in_shard:04d}'
@@ -549,33 +566,36 @@ class OBELICSDataset(IterableDataset):
                             self.current_tar.close()
                         self.current_tar = tarfile.open(tar_file)
 
-
-                    seed_path = f"{self.seed_folder}/obelics-train-{shard_id:05d}-of-01335/{shard_id:05d}.parquet"
+                    seed_path = tar_file.replace(self.images_path, self.seed_folder)
+                    seed_path = seed_path.replace(".tar", ".parquet")
                     if self.current_seed_parquet_file != seed_path:
+                        self.current_seed_parquet_file = seed_path
                         self.current_seed_parquet = pd.read_parquet(seed_path)
                         self.current_seed_parquet = self.current_seed_parquet.set_index("key")
-
                     # Get seed tokens 
                     try:
                         seed_tokens = np.frombuffer(self.current_seed_parquet.loc[image_id]['seed_tokens'], dtype=np.int64)
-                        image = self.current_tar.extractfile(f"{image_id}.jpg")
+                        image = self.current_tar.extractfile(f"{image_id}.jpg") #FIX 
                         image_data = image.read()
                         image = Image.open(io.BytesIO(image_data))
                         if image.mode != 'RGB':
                             image = image.convert('RGB')
                         split_images = split_images_fn(image, 224)
 
-                        final_texts[-1] += " " + self.image_start_text + " ".join([f"<|seed_{seed_token}|>" for seed_token in seed_tokens])
+                        final_texts[-1] = final_texts[-1].rstrip() + self.image_start_text + "".join([f"<|seed_{seed_token}|>" for seed_token in seed_tokens])
                         
                         for split_image in split_images:
                             final_images.append(split_image)
                             final_texts.append(None)
 
-                    except:
-                        print(f"Error encountered in processing image {image_id}. Skipping this image.")
+                        if row['texts'][i+1] is not None:
+                            row['texts'][i+1] = self.image_end_text + row['texts'][i+1]
+                        else:
+                            final_images.append(None)
+                            final_texts.append(self.image_end_text)
+                            
+                    except Exception as e:
                         continue
-
-                print(final_images, final_texts)
                 yield {
                     "images": final_images,
                     "text": final_texts
@@ -632,7 +652,7 @@ class DatacompDataset(IterableDataset):
 
                 if self.mode == "understanding":
                     text_understanding_caption = random.choice(IMAGE_UNDERSTANDING_TEXT_VARIANTS)
-                    text_portion = text_understanding_caption[0] + " " + self.image_start_text + " ".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
+                    text_portion = text_understanding_caption[0].rstrip() + self.image_start_text + "".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
 
                     images = [None]
                     texts = [text_portion]
@@ -640,11 +660,11 @@ class DatacompDataset(IterableDataset):
                         images.append(split_image)
                         texts.append(None)
                     images.append(None)
-                    texts.append(" " + self.image_end_text + " " + text_understanding_caption[1] + text)
+                    texts.append(self.image_end_text + text_understanding_caption[1] + text)
                     
                 elif self.mode == "generation":
                     generation_caption = random.choice(IMAGE_GENERATION_TEXT_VARIANTS)
-                    text_portion = generation_caption[0] + text + generation_caption[1] + self.image_start_text + " ".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
+                    text_portion = generation_caption[0] + text + generation_caption[1].rstrip() + self.image_start_text + "".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
                 
                     images = [None]
                     texts = [text_portion]
@@ -652,7 +672,7 @@ class DatacompDataset(IterableDataset):
                         images.append(split_image)
                         texts.append(None)
                     images.append(None)
-                    texts.append(" " + self.image_end_text)
+                    texts.append(self.image_end_text)
 
                 else:
                     raise ValueError("Mode not understood")
@@ -755,7 +775,7 @@ class GritDatasetGeneration(IterableDataset):
             seed_tokens = np.frombuffer(self.current_loaded_parquet.loc[sample_json["key"]]['seed_tokens'], dtype=np.int64)
 
 
-            text_portion = self.image_start_text + " ".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
+            text_portion = self.image_start_text + "".join([f'<|seed_{seed_token}|>' for seed_token in seed_tokens])
 
             
             temp_text = self.image_end_text + "<|grounding|>"
@@ -782,7 +802,6 @@ class GritDatasetGeneration(IterableDataset):
                 if start_text > last_text_index:
                     # text_list.append(text[last_text_index:start_text])
                     temp_text += text[last_text_index:start_text]
-
                     # image_list.append(None)
                 
                 top_left = [ref_exp[2], ref_exp[3]]
@@ -805,7 +824,7 @@ class GritDatasetGeneration(IterableDataset):
                 # text_list.append(f"<|box_{bottom_right_bin}|>")
                 # text_list.append("<|/box|>")
                 
-                temp_text += "<|p|>" + referring_expression + "<|/p|>" + "<|box|>" + f"<|box_{top_left_bin}|>" + f"<|box_{bottom_right_bin}|>" + "<|/box|>"
+                temp_text += "<|p|>" + referring_expression + "<|/p|><|box|>" + f"<|box_{top_left_bin}|>" + f"<|box_{bottom_right_bin}|>" + "<|/box|>"
 
                 # extend image list with 7 nones
                 # image_list.extend([None] * 7)
@@ -817,7 +836,6 @@ class GritDatasetGeneration(IterableDataset):
 
             text_list.append(temp_text)
             image_list.append(None)
-            print(text_list, image_list)
             assert len(text_list) == len(image_list)
             yield {
                 "images": image_list,
@@ -826,7 +844,7 @@ class GritDatasetGeneration(IterableDataset):
 
 def build_interleaved_multimodal_dataset(   
     path: str,
-    dataset: str, 
+    dataset_type: str, 
     group: tuple, 
     mode: ConcatMode,
     max_length: Optional[int] = None,
@@ -838,7 +856,8 @@ def build_interleaved_multimodal_dataset(
     tokenizer = None,
     vision_seq_length: int = 64,
     after_image_extra_tokens: int = 10,
-    position_pad_id: int = -1
+    position_pad_id: int = -1, 
+    datacomp_mode = None,
 ):
     """Build an IterableDataset over the HF C4 or pile source data.
 
@@ -856,13 +875,13 @@ def build_interleaved_multimodal_dataset(
     Returns:
         An IterableDataset.
     """
-    if dataset == "datacomp":
-        dataset = DatacompDataset(path, group, image_start_text, image_end_text, "understanding")
-    elif dataset == "text":
+    if dataset_type == "datacomp":
+        dataset = DatacompDataset(path, group, image_start_text, image_end_text, datacomp_mode)
+    elif dataset_type == "text":
         dataset = TextConcatDataset(path, group)
-    elif dataset == "grit":
+    elif dataset_type == "grit":
         dataset = GritDatasetGeneration(group, image_start_text, image_end_text)
-    elif dataset == "obelics":
+    elif dataset_type == "obelics":
         dataset = OBELICSDataset(group, image_start_text, image_end_text)
     else:
         raise ValueError(f"Dataset {dataset} not recognized.")
@@ -891,6 +910,7 @@ def build_interleaved_multimodal_dataset(
             image_seq_length=vision_seq_length,
             bos_text=bos_text,
             image_start_text=image_start_text,
+            image_end_text=image_end_text,
             eos_text=eos_text,
             no_wrap=no_wrap, 
             after_image_extra_tokens=after_image_extra_tokens,
@@ -915,6 +935,7 @@ def data_generator(task_queue, data_queue, args, worker_id):
 
     partial_builder = partial(build_interleaved_multimodal_dataset, 
                                 path=args.path,
+                                dataset_type=args.dataset_type,
                                 mode=mode,
                                 max_length=args.concat_tokens,
                                 bos_text=tokenizer.bos_text,
@@ -925,7 +946,8 @@ def data_generator(task_queue, data_queue, args, worker_id):
                                 tokenizer=tokenizer, 
                                 vision_seq_length=args.vision_seq_length,
                                 after_image_extra_tokens=args.after_image_extra_tokens,
-                                position_pad_id=args.position_pad_id)
+                                position_pad_id=args.position_pad_id, 
+                                datacomp_mode=args.datacomp_mode)
     
     while not task_queue.empty():
         group = task_queue.get()
@@ -1042,7 +1064,8 @@ def parse_args() -> Namespace:
     parser.add_argument('--path', type=str, required=True)
     parser.add_argument('--out_root', type=str, required=True)
     parser.add_argument('--compression', type=str, default=None)
-    parser.add_argument('--dataset', type=str, default=None)
+    parser.add_argument('--dataset_type', type=str, default=None)
+    parser.add_argument('--datacomp_mode', type=str, default=None)
 
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument(
@@ -1052,10 +1075,10 @@ def parse_args() -> Namespace:
     parser.add_argument('--queue_size', type=int, default=5000)
     parser.add_argument('--split', type=str, default='train')
     parser.add_argument('--num_groups', type=int, default=5)
-    parser.add_argument('--workers', type=int, default=5) # 44       # 80
+    parser.add_argument('--workers', type=int, default=1) # 44       # 80
     parser.add_argument('--num_writers', type=int, default=40) # 2
     parser.add_argument('--start_ind', type=int, default=0)
-    parser.add_argument('--end_ind', type=int, default=10) #150
+    parser.add_argument('--end_ind', type=int, default=600) #150
     parser.add_argument('--tokenizer_type', type=str, required=False, default=None)
     parser.add_argument('--vocab_file', type=str, required=False, default=None)
     parser.add_argument('--merge_file', type=str, required=False, default=None)
