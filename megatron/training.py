@@ -393,7 +393,6 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
         position_pad_token_id=neox_args.position_pad_id,
         vision_input_start_token = tokenizer.image_start_id,
         vision_input_end_token = tokenizer.image_end_id,
-        vision_gen_start_token = tokenizer.image_gen_start_id,
         concat_data=neox_args.concat_data,
         attn_uses_sequence_id=neox_args.attn_uses_sequence_id
     )
@@ -411,7 +410,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype):
     #     print("attention_mask", attention_mask[i].tolist())
     #     print("position_ids", position_ids[i].tolist())
     # exit()
-    print(vision_input.shape)
+    # print(vision_input.shape)
     return text_input, vision_input, multimodal_position_ids, labels, loss_mask, attention_mask, position_ids
 
 

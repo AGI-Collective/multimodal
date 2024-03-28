@@ -4,39 +4,39 @@
     'dataset': {
         'batching_method': 'stratified',
         'streams':{
-            laion400M:{ # 154980
-              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-              'split': "laion_400m_train",
-              'keep_zip': True,  # in case we need compressed files after testing
-              'proportion': 0.1,
-            },            
-            arxiv:{ # 610000
+            slimpajama:{ 
               'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
               'split': "text_train_chunk1",
               'keep_zip': True,  # in case we need compressed files after testing
-              'proportion': 0.4,
-            },  
-            mmc4:{ # 3850
-              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-              'split': "mmc4_train",
-              'keep_zip': True,  # in case we need compressed files after testing
-              'proportion': 0.2,
+              'proportion': 0.5,
             },            
-            seed:{  # 79200
+            obelics:{ 
               'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-              'split': "seed_train",
+              'split': "obelics_train",
               'keep_zip': True,  # in case we need compressed files after testing
               'proportion': 0.2,
-            }, 
-            grit:{  # 45360
+            },  
+            grit:{ 
               'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
               'split': "grit_train",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.1,
+            },            
+            understanding:{  
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "datacomp_train_understanding",
+              'keep_zip': True,  # in case we need compressed files after testing
+              'proportion': 0.1,
+            }, 
+            generation:{  
+              'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
+              'split': "datacomp_train_generation",
               'keep_zip': True,  # in case we need compressed files after testing
               'proportion': 0.1,
             }, 
         }
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
   },
 
@@ -44,62 +44,62 @@
     {
     'name': 'text', 
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "laion_400m_validation",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1",
+        'split': "0",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
     },
     {
-    'name': 'text', 
+    'name': 'obelics', 
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "text_val_chunk1",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/obelics_train/0",
+        'split': "0",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
     },
     {
-    'name': 'text', 
+    'name': 'grit', 
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "mmc4_val",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/grit_train",
+        'split': "0",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
     },
     {
-    'name': 'text', 
+    'name': 'understanding', 
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "seed_val",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_understanding",
+        'split': "0",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
     },
     {
-    'name': 'text', 
+    'name': 'generation', 
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "grit_val",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_generation",
+        'split': "0",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
-    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/validation_hb_testing1",
+    'state_dict_path': "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/data/train_hb_final_unified",
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
     }
     
   ],
@@ -107,13 +107,13 @@
   test_streaming_data_config: {
     'name': 'text',
     'dataset': {
-        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final",
-        'split': "text_val_chunk1",
+        'local': "/p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1",
+        'split': "1",
         'shuffle': False,
         'keep_zip': True,  # in case we need compressed files after testing
     },
     'drop_last': True,
-    'epoch_size': 40000,
+    'epoch_size': 200,
   },
   
   # If weight_by_num_documents is True, Builds dataset weights from a multinomial distribution over groups of data according to the number of documents in each group.
@@ -125,21 +125,21 @@
   "vocab-file": "/p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json",
   "position_pad_id": -1,
 
-  "save": "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/model/hb_testing1",
-  "load": "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/model/hb_testing1", # "/p/fastdata/mmlaion/hummingbird/checkpoints/1_4_expanded_neox", #"/p/fastdata/mmlaion/hummingbird/checkpoints/1_neox",
+  "save": "/p/fastdata/mmlaion/hummingbird/runs/checkpoints/model/1_4_final", 
+  "load": "/p/fastdata/mmlaion/hummingbird/checkpoints/1_4_final", # "/p/fastdata/mmlaion/hummingbird/checkpoints/1_4_expanded_neox", #"/p/fastdata/mmlaion/hummingbird/checkpoints/1_neox",
   "checkpoint_validation_with_forward_pass": False,
 
-  "tensorboard-dir": "/p/fastdata/mmlaion/hummingbird/runs/tensorboard/hb_testing1",
-  "log-dir": "/p/fastdata/mmlaion/hummingbird/runs/logs/hb_testing1",
+  "tensorboard-dir": "/p/fastdata/mmlaion/hummingbird/runs/tensorboard/1_4_final",
+  "log-dir": "/p/fastdata/mmlaion/hummingbird/runs/logs/1_4_final",
   "use_wandb": True,
   "wandb_host": "https://api.wandb.ai",
   "wandb_project": "hummingbird",
-  "wandb_dir": "/p/fastdata/mmlaion/hummingbird/runs/wandb/hb_testing1",
+  "wandb_dir": "/p/fastdata/mmlaion/hummingbird/runs/wandb/1_4_final",
   "no_ssh_check": True,
   "num_workers": 1,
 
   "vision_seq_length": 64,
-  # "finetune": True,
+  "finetune": True,
   # "concat"
 } 
 

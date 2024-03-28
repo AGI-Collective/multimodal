@@ -7,6 +7,7 @@ from argparse import ArgumentParser, Namespace
 from typing import Dict, Iterable, Optional, List
 from enum import Enum
 import glob
+from glob import glob
 from tqdm import tqdm
 import warnings
 import io
@@ -373,7 +374,6 @@ class ConcatTokensDataset(IterableDataset):
                     return image_splits
 
                 if text != None and image == None:
-                    # Fix saving the missing/original part of the text
                     index_to_add_till = len(text)
                     if self.image_start_token in text:
                         image_ind = text.index(self.image_start_token)
@@ -769,7 +769,7 @@ class GritDatasetGeneration(IterableDataset):
 
             # get list of .parquet files in the folder
             # and add to the overall list
-            all_files += glob.glob(os.path.join(folder, "*.tar"))
+            all_files += glob(os.path.join(folder, "*.tar"))
 
         self.dataset = (
             wds.WebDataset(all_files)
@@ -1055,7 +1055,7 @@ def data_writer(data_queue, args, index):
         columns=columns,
         out=os.path.join(f"{args.out_root}/{index}"),
         compression=args.compression,
-        size_limit=1e9,
+        size_limit=5e8,
     ) as out:
 
         total_samples = 0
@@ -1163,11 +1163,11 @@ def parse_args() -> Namespace:
     )
     parser.add_argument("--queue_size", type=int, default=5000)
     parser.add_argument("--split", type=str, default="train")
-    parser.add_argument("--num_groups", type=int, default=5)
-    parser.add_argument("--workers", type=int, default=1)  # 44       # 80
-    parser.add_argument("--num_writers", type=int, default=40)  # 2
+    parser.add_argument("--num_groups", type=int, default=100)
+    parser.add_argument("--workers", type=int, default=28)  # 44       # 80
+    parser.add_argument("--num_writers", type=int, default=16)  # 2
     parser.add_argument("--start_ind", type=int, default=0)
-    parser.add_argument("--end_ind", type=int, default=600)  # 150
+    parser.add_argument("--end_ind", type=int, default=1000)  # 150
     parser.add_argument("--tokenizer_type", type=str, required=False, default=None)
     parser.add_argument("--vocab_file", type=str, required=False, default=None)
     parser.add_argument("--merge_file", type=str, required=False, default=None)
@@ -1202,9 +1202,20 @@ if __name__ == "__main__":
     main(parse_args())
 
 """
-python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/grit --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset/grit_train
+number of groups 100
+1e9, 10, 46
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk1 --dataset_type text --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1
 
-python megatron/data/streaming_dataset/interleaved_text_image/create_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk1 --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1
+5e8, 20, 28
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode understanding --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_understanding
 
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/unified_test4
+5e8, 20, 28
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode generation --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_generation
+
+5e8, 28, 20
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/OBELICS_parquet --dataset_type obelics --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/obelics_train
+
+20 groups
+5e8, 20, 28
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/grit --dataset_type grit --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/grit_train
 """

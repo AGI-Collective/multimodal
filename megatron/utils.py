@@ -273,7 +273,6 @@ def get_multimodal_ltor_masks_and_position_ids(
     position_pad_token_id,
     vision_input_start_token,
     vision_input_end_token,
-    vision_gen_start_token,
     concat_data=True,
     attn_uses_sequence_id=False,
 ):
@@ -326,7 +325,7 @@ def get_multimodal_ltor_masks_and_position_ids(
         loss_mask[labels == eod_token] = 0.0
         loss_mask[labels == vision_input_start_token] = 0.0
         loss_mask[labels == vision_input_end_token] = 0.0
-        loss_mask[labels == vision_gen_start_token] = 0.0
+        # loss_mask[labels == vision_gen_start_token] = 0.0
 
     # if concat_data:
         
