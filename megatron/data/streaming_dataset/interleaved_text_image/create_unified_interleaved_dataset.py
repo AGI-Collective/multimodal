@@ -16,6 +16,7 @@ from functools import partial
 import tarfile
 import pandas as pd
 import random
+import time
 
 import torch
 from torch.utils.data import IterableDataset
@@ -115,43 +116,28 @@ IMAGE_GENERATION_TEXT_VARIANTS = [
 
 
 class ListPIL(Encoding):
-    """Store PIL image raw.
-
-    Format: [width: 4] [height: 4] [mode size: 4] [mode] [raw image].
-    """
-
-    def encode(self, images: List[Image.Image]) -> bytes:
+    def encode(self, images: List[Image.Image], quality: int = 95) -> bytes:
         final_bytes = b""
         for obj in images:
-            mode = obj.mode.encode("utf-8")
-            width, height = obj.size
-            raw = obj.tobytes()
-            ints = np.array([width, height, len(mode), len(raw)], np.uint32)
-            final_bytes += ints.tobytes() + mode + raw
+            byte_arr = io.BytesIO()
+            obj.save(byte_arr, format='JPEG', quality=quality)
+            raw = byte_arr.getvalue()
+            raw_len = len(raw)
+            ints = np.array([raw_len], np.uint32)
+            final_bytes += ints.tobytes() + raw
         return final_bytes
 
     def decode(self, data: bytes) -> List[Image.Image]:
         images = []
-        idx = 4 * 4
         start = 0
-
-        while True:
-            if start == len(data):
-                break
-            width, height, mode_size, raw_size = np.frombuffer(
-                data[start : start + idx], np.uint32
-            )
-
-            start = start + idx
-            idx2 = start + mode_size
-
-            mode = data[start:idx2].decode("utf-8")
-            start = idx2
-            size = width, height
-            idx3 = start + raw_size
-            raw = data[start:idx3]
-            start = idx3
-            images.append(Image.frombytes(mode, size, raw))  # pyright: ignore
+        while start < len(data):
+            raw_size = np.frombuffer(data[start : start + 4], np.uint32)[0]
+            start += 4
+            raw = data[start:start + raw_size]
+            start += raw_size
+            byte_arr = io.BytesIO(raw)
+            img = Image.open(byte_arr)
+            images.append(img)
         return images
 
 
@@ -771,7 +757,7 @@ class GritDatasetGeneration(IterableDataset):
             # and add to the overall list
             all_files += glob(os.path.join(folder, "*.tar"))
 
-        self.dataset = (
+        self.dataset = iter(
             wds.WebDataset(all_files)
             .decode("pilrgb")
             .rename(image="jpg;png;jpeg;webp", text="txt", json="json")
@@ -820,98 +806,107 @@ class GritDatasetGeneration(IterableDataset):
         return bin_number
 
     def __iter__(self):
-        for sample in self.dataset:
-
-            sample_json = sample[2]
-            text = sample_json["caption"]
-            image = sample[0]
-            image = torchvision.transforms.functional.resize(
-                image, [224, 224], interpolation=InterpolationMode.BICUBIC
-            )
-
-            current_path = sample[3]
-
-            # replace "GRIT_img" with "seed_tokens_grit"
-            seed_folder = current_path.replace("GRIT_img", "seed_tokens_grit")
-
-            # replace .tar with .parquet
-            parquet_path = seed_folder.replace(".tar", ".parquet")
-
-            # use self.seed_folder to get appropriate parquet file.
-
-            if self.current_parquet_path != parquet_path:
-                self.current_parquet_path = parquet_path
-                self.current_loaded_parquet = pd.read_parquet(parquet_path)
-                self.current_loaded_parquet.set_index("key", inplace=True)
-
-            seed_tokens = np.frombuffer(
-                self.current_loaded_parquet.loc[sample_json["key"]]["seed_tokens"],
-                dtype=np.int64,
-            )
-
-            text_portion = self.image_start_text + "".join(
-                [f"<|seed_{seed_token}|>" for seed_token in seed_tokens]
-            )
-
-            temp_text = self.image_end_text + "<|grounding|>"
-
-            image_list = [None, image]
-            text_list = [text_portion, None]
-
-            # sort ref expressions based on the first value
-            sample_json["ref_exps"].sort(key=lambda x: x[0])
-            i = 1
-            while i < len(sample_json["ref_exps"]):
-                if sample_json["ref_exps"][i][0] < sample_json["ref_exps"][i - 1][1]:
-                    # remove this ref exp
-                    sample_json["ref_exps"].pop(i)
-                else:
-                    i += 1
-
-            last_text_index = 0
-            for ref_exp in sample_json["ref_exps"]:
-                start_text = int(ref_exp[0])
-                end_text = int(ref_exp[1])
-
-                if start_text > last_text_index:
-                    # text_list.append(text[last_text_index:start_text])
-                    temp_text += text[last_text_index:start_text]
-                    # image_list.append(None)
-
-                top_left = [ref_exp[2], ref_exp[3]]
-                bottom_right = [ref_exp[4], ref_exp[5]]
-
-                top_left[0] = int(top_left[0] * 224)
-                top_left[1] = int(top_left[1] * 224)
-                bottom_right[0] = int(bottom_right[0] * 224)
-                bottom_right[1] = int(bottom_right[1] * 224)
-
-                top_left_bin = self.get_bin_number(
-                    224, 224, 32, top_left[0], top_left[1]
-                )
-                bottom_right_bin = self.get_bin_number(
-                    224, 224, 32, bottom_right[0], bottom_right[1]
+        while True:
+            try:
+                image, text, sample_json, url = next(self.dataset)
+                text = sample_json["caption"]
+                
+                image = torchvision.transforms.functional.resize(
+                    image, [224, 224], interpolation=InterpolationMode.BICUBIC
                 )
 
-                referring_expression = text[start_text:end_text]
+                current_path = url
 
-                temp_text += (
-                    "<|p|>"
-                    + referring_expression
-                    + "<|/p|><|box|>"
-                    + f"<|box_{top_left_bin}|>"
-                    + f"<|box_{bottom_right_bin}|>"
-                    + "<|/box|>"
+                # replace "GRIT_img" with "seed_tokens_grit"
+                seed_folder = current_path.replace("GRIT_img", "seed_tokens_grit")
+
+                # replace .tar with .parquet
+                parquet_path = seed_folder.replace(".tar", ".parquet")
+
+                # use self.seed_folder to get appropriate parquet file.
+
+                if self.current_parquet_path != parquet_path:
+                    self.current_parquet_path = parquet_path
+                    self.current_loaded_parquet = pd.read_parquet(parquet_path)
+                    self.current_loaded_parquet.set_index("key", inplace=True)
+
+                seed_tokens = np.frombuffer(
+                    self.current_loaded_parquet.loc[sample_json["key"]]["seed_tokens"],
+                    dtype=np.int64,
                 )
 
-                last_text_index = end_text
-            if last_text_index < len(text):
-                temp_text += text[last_text_index:]
+                text_portion = self.image_start_text + "".join(
+                    [f"<|seed_{seed_token}|>" for seed_token in seed_tokens]
+                )
 
-            text_list.append(temp_text)
-            image_list.append(None)
-            assert len(text_list) == len(image_list)
-            yield {"images": image_list, "text": text_list}
+                temp_text = self.image_end_text + "<|grounding|>"
+
+                image_list = [None, image]
+                text_list = [text_portion, None]
+
+                # sort ref expressions based on the first value
+                sample_json["ref_exps"].sort(key=lambda x: x[0])
+                i = 1
+                while i < len(sample_json["ref_exps"]):
+                    if sample_json["ref_exps"][i][0] < sample_json["ref_exps"][i - 1][1]:
+                        # remove this ref exp
+                        sample_json["ref_exps"].pop(i)
+                    else:
+                        i += 1
+
+                last_text_index = 0
+                for ref_exp in sample_json["ref_exps"]:
+                    start_text = int(ref_exp[0])
+                    end_text = int(ref_exp[1])
+
+                    if start_text > last_text_index:
+                        # text_list.append(text[last_text_index:start_text])
+                        temp_text += text[last_text_index:start_text]
+                        # image_list.append(None)
+
+                    top_left = [ref_exp[2], ref_exp[3]]
+                    bottom_right = [ref_exp[4], ref_exp[5]]
+
+                    top_left[0] = int(top_left[0] * 224)
+                    top_left[1] = int(top_left[1] * 224)
+                    bottom_right[0] = int(bottom_right[0] * 224)
+                    bottom_right[1] = int(bottom_right[1] * 224)
+
+                    top_left_bin = self.get_bin_number(
+                        224, 224, 32, top_left[0], top_left[1]
+                    )
+                    bottom_right_bin = self.get_bin_number(
+                        224, 224, 32, bottom_right[0], bottom_right[1]
+                    )
+
+                    referring_expression = text[start_text:end_text]
+
+                    temp_text += (
+                        "<|p|>"
+                        + referring_expression
+                        + "<|/p|><|box|>"
+                        + f"<|box_{top_left_bin}|>"
+                        + f"<|box_{bottom_right_bin}|>"
+                        + "<|/box|>"
+                    )
+
+                    last_text_index = end_text
+                if last_text_index < len(text):
+                    temp_text += text[last_text_index:]
+
+                text_list.append(temp_text)
+                image_list.append(None)
+                assert len(text_list) == len(image_list)
+                yield {"images": image_list, "text": text_list}
+
+            except StopIteration:
+                break
+            except ValueError as e:
+                print(f"Error encountered: {e}. Skipping this datapoint.")
+                continue
+            except Exception as e:
+                print(f"Unexpected Error encountered: {e}. Skipping this datapoint.")
+                continue
 
 
 def build_interleaved_multimodal_dataset(
@@ -1067,12 +1062,17 @@ def data_writer(data_queue, args, index):
                 total_samples += 1
                 total_images += len(sample["images"])
                 out.write(sample)
-                print(
-                    f"\rWriter {index} Writing sample {total_samples} with {total_images} images.........",
-                    flush=True,
-                    end="",
-                )
-                if total_samples > 3000:
+                # print(
+                #     f"\rWriter {index} Writing sample {total_samples} with {total_images} images.........",
+                #     flush=True,
+                #     end="",
+                # )
+                # if total_samples % 500 == 0:
+                #     end_time = time.time()
+                #     time_taken = end_time - start_time
+                #     print(f"\nTime taken for 1000 samples: {time_taken} seconds")
+                #     start_time = time.time()  # reset start time
+                if total_samples > 1000:
                     break
             except multiprocessing.queues.Empty:
                 print(f"\rNo more data to write. Exiting. {index}")
@@ -1163,16 +1163,16 @@ def parse_args() -> Namespace:
     )
     parser.add_argument("--queue_size", type=int, default=5000)
     parser.add_argument("--split", type=str, default="train")
-    parser.add_argument("--num_groups", type=int, default=100)
-    parser.add_argument("--workers", type=int, default=28)  # 44       # 80
-    parser.add_argument("--num_writers", type=int, default=16)  # 2
-    parser.add_argument("--start_ind", type=int, default=0)
-    parser.add_argument("--end_ind", type=int, default=1000)  # 150
+    parser.add_argument("--num_groups", type=int, default=1)
+    parser.add_argument("--workers", type=int, default=1)  # 44       # 80
+    parser.add_argument("--num_writers", type=int, default=1)  # 2
+    parser.add_argument("--start_ind", type=int, default=19)
+    parser.add_argument("--end_ind", type=int, default=21)  # 150
     parser.add_argument("--tokenizer_type", type=str, required=False, default=None)
     parser.add_argument("--vocab_file", type=str, required=False, default=None)
     parser.add_argument("--merge_file", type=str, required=False, default=None)
     parser.add_argument("--no_wrap", default=False, action="store_true")
-    parser.add_argument("--vision_seq_length", type=int, default=64)
+    parser.add_argument("--vision_seq_length", type=int, default=32)
     parser.add_argument("--after_image_extra_tokens", type=int, default=10)
     parser.add_argument("--position_pad_id", type=int, default=-1)
 
@@ -1204,18 +1204,18 @@ if __name__ == "__main__":
 """
 number of groups 100
 1e9, 10, 46
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk1 --dataset_type text --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_train_chunk1
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk2 --dataset_type text --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_val_chunk2
 
-5e8, 20, 28
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode understanding --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_understanding
+5e8, 22, 26
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode understanding --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_val_understanding
 
-5e8, 20, 28
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode generation --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_generation
+5e8, 22, 26
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode generation --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_val_generation
 
-5e8, 28, 20
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/OBELICS_parquet --dataset_type obelics --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/obelics_train
+5e8, 30, 18
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/OBELICS_parquet --dataset_type obelics --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/obelics_val
 
 20 groups
-5e8, 20, 28
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/grit --dataset_type grit --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/grit_train
+5e8, 22, 26
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/grit --dataset_type grit --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/grit_val
 """

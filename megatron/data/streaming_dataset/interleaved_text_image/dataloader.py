@@ -24,10 +24,12 @@ from transformers import AutoImageProcessor, AutoModel
 from streaming.base.format.mds.encodings import Encoding, _encodings
 from einops import rearrange
 
-from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_dataset import simple_encoding, ListPIL, PickleEncoding
-_encodings['pickleencoding'] = PickleEncoding
+# from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_dataset import simple_encoding, ListPIL, PickleEncoding
+
+from megatron.data.streaming_dataset.interleaved_text_image.create_unified_interleaved_dataset import ListPIL
+# _encodings['pickleencoding'] = PickleEncoding
 _encodings['listpil'] = ListPIL
-_encodings['simple_encoding'] = simple_encoding
+# _encodings['simple_encoding'] = simple_encoding
 from megatron.tokenizer.tokenizer import build_tokenizer
 
 class StreamingInterleavedDataset(StreamingDataset):
