@@ -111,7 +111,7 @@ Logging Arguments
 
 - **git_hash**: str
 
-    Default = 667e648
+    Default = 11a5537
 
     current git hash of repository
 
@@ -199,6 +199,54 @@ Logging Arguments
 
 
 
+- **memory_profiling**: bool
+
+    Default = False
+
+    Whether to take a memory snapshot of the model. Useful for debugging memory issues.
+
+
+
+- **memory_profiling_path**: str
+
+    Default = None
+
+    Path to save memory snapshot to.
+
+
+
+- **profile**: bool
+
+    Default = False
+
+    Enable nsys profiling. When using this option,
+    nsys options should be specified in commandline.
+    An example nsys commandline is
+    ```
+    nsys profile -s none -t nvtx,cuda -o <path/to/output_file>
+    --force-overwrite true
+    --capture-range=cudaProfilerApi
+    --capture-range-end=stop
+    ```
+
+
+
+- **profile_step_start**: int
+
+    Default = 10
+
+    Step to start profiling at.
+
+
+
+- **profile_step_stop**: int
+
+    Default = 12
+
+    Step to stop profiling at.
+
+
+
 ## NeoXArgsModel
 
 Model Arguments
@@ -229,11 +277,37 @@ Model Arguments
 
 
 
+- **intermediate_size**: int
+
+    Default = None
+
+    Transformer intermediate size. Currently only used for "mlp_type": "llama".
+
+    If not passed, will be set to a reasonable default.
+
+
+
 - **num_attention_heads**: int
 
     Default = None
 
     Number of transformer attention heads.
+
+    If num_kv_heads is set, will control only number of query heads.
+
+
+
+- **num_kv_heads**: int
+
+    Default = None
+
+    Number of transformer key/value attention heads.
+
+    If set to None or the same value as num_attention_heads, will perform multi-head attention (MHA).
+    If set to < num_attention_heads but > 1, will perform grouped-query attention (GQA) (https://arxiv.org/pdf/2305.13245.pdf)
+    If set to 1, will perform multi-query attention.
+
+    Must be < num_attention_heads and divide num_attention_heads evenly.
 
 
 
@@ -242,6 +316,14 @@ Model Arguments
     Default = None
 
     Maximum sequence length to process.
+
+
+
+- **sliding_window_width**: int
+
+    Default = None
+
+    Width of the attention sliding window. Only supported with Flash Attention 2.
 
 
 
@@ -258,6 +340,22 @@ Model Arguments
     Default = layernorm
 
     Normalization layer to use. Choose from "layernorm", "rmsnorm", "scalenorm".
+
+
+
+- **layernorm_fusion**: bool
+
+    Default = False
+
+    Use fused layer norm kernel (if `norm` is `layernorm`).
+
+
+
+- **use_qk_layernorm**: bool
+
+    Default = False
+
+    Use QK Normalization
 
 
 
@@ -334,7 +432,7 @@ Model Arguments
     The first item in the list specifies the attention type(s), and should be a list of strings. The second item
     specifies the number of times to repeat those attention types in the full list.
 
-    attention type choices:  [global, local, sparse_fixed, sparse_variable, bslongformer, bigbird]
+    attention type choices:  [global, local, sparse_fixed, sparse_variable, bslongformer, bigbird, "gmlp", "amlp", "flash", "mamba"]
 
     So a 12 layer network with only global attention could be specified like:
         [[[`global`], 12]]
@@ -439,6 +537,14 @@ Model Arguments
 
 
 
+- **rope_fusion**: bool
+
+    Default = False
+
+    Enable rotary embedding fusion.
+
+
+
 - **fp16_lm_cross_entropy**: bool
 
     Default = False
@@ -495,7 +601,19 @@ Model Arguments
 
 
 
-- **init_method**: typing.Literal['normal', 'scaled_normal', 'orthogonal', 'scaled_orthogonal', 'xavier_uniform', 'xavier_normal', 'wang_init', 'small_init']
+- **rotary_save_freqs_buffer**: bool
+
+    Default = False
+
+    Used to control whether the `inv_freqs` buffer in rotary embeddings
+    will be stored in checkpoints (persistent=True) or not.
+
+    Defaults to false, but is left configurable to maintain backward-compatibility
+    with GPT-NeoX checkpoints that were trained with this flag.
+
+
+
+- **init_method**: typing.Literal['normal', 'scaled_normal', 'orthogonal', 'scaled_orthogonal', 'xavier_uniform', 'xavier_normal', 'wang_init', 'small_init', 'single_residual_scaled_normal']
 
     Default = normal
 
@@ -504,7 +622,7 @@ Model Arguments
 
 
 
-- **output_layer_init_method**: typing.Literal['normal', 'scaled_normal', 'orthogonal', 'scaled_orthogonal', 'xavier_uniform', 'xavier_normal', 'wang_init', 'small_init']
+- **output_layer_init_method**: typing.Literal['normal', 'scaled_normal', 'orthogonal', 'scaled_orthogonal', 'xavier_uniform', 'xavier_normal', 'wang_init', 'small_init', 'single_residual_scaled_normal']
 
     Default = scaled_normal
 
@@ -587,6 +705,55 @@ Model Arguments
 
 
 
+- **mamba_selective_scan_fusion**: bool
+
+    Default = False
+
+    Enable fused kernels for Mamba selective scan.
+
+
+
+- **mamba_causal_conv_fusion**: bool
+
+    Default = False
+
+    Enable fused kernels for Mamba causal Conv1d.
+
+
+
+- **mamba_inner_func_fusion**: bool
+
+    Default = False
+
+    Enable fused inner operator for Mamba. (Supersedes conv. and selective scan fusion flags, requires each of those kernels to be installed.)
+
+
+
+- **mamba_selective_fp32_params**: bool
+
+    Default = True
+
+    Keep selected parameters in fp32 for Mamba (A and D).
+    Requires https://github.com/EleutherAI/DeeperSpeed/pull/61 .
+
+
+
+- **mamba_use_bias_in_conv**: bool
+
+    Default = True
+
+    If false, conv1d in mamba block will not have bias term
+
+
+
+- **mamba_use_bias_in_linears**: bool
+
+    Default = False
+
+    Enable bias terms in mamba block up- and down- projections (in_proj and out_proj).
+
+
+
 - **output_layer_parallelism**: typing.Literal['column']
 
     Default = column
@@ -601,11 +768,11 @@ Optimizer Arguments
 
 
 
-- **optimizer_type**: typing.Literal['adam', 'onebitadam', 'cpu_adam', 'cpu_torch_adam', 'sm3', 'madgrad_wd', 'sgd']
+- **optimizer_type**: typing.Literal['adam', 'onebitadam', 'cpu_adam', 'cpu_torch_adam', 'sm3', 'madgrad_wd', 'sgd', 'lion']
 
     Default = adam
 
-    Type of optimizer to use. Choose from ['adam', 'onebitadam', 'cpu_adam', 'cpu_torch_adam', 'sm3', 'madgrad_wd', 'sgd']
+    Type of optimizer to use. Choose from ['adam', 'onebitadam', 'cpu_adam', 'cpu_torch_adam', 'sm3', 'madgrad_wd', 'sgd', 'lion']
     NOTE: sgd will use MuSGD from Mup. Mup must be enabled for this optimizer.
 
 
@@ -800,7 +967,7 @@ Misc. Arguments
 
 
 
-- **do_train**: int
+- **do_train**: bool
 
     Default = None
 
@@ -808,7 +975,7 @@ Misc. Arguments
 
 
 
-- **do_valid**: int
+- **do_valid**: bool
 
     Default = None
 
@@ -816,7 +983,7 @@ Misc. Arguments
 
 
 
-- **do_test**: int
+- **do_test**: bool
 
     Default = None
 
@@ -886,6 +1053,14 @@ Parallelism Arguments
 
     flag to determine whether pipeline parallelism is on - shouldn't be set by user, is automatically determined
     according to pipeline parallel size.
+
+
+
+- **expert_interval**: int
+
+    Default = 2
+
+    Have one MoE layer every expert_interval layers
 
 
 
@@ -1005,6 +1180,96 @@ Text Generation arguments
     Default = None
 
     Tasks to evaluate on using lm_eval_harness
+
+    NOTE: Requires internet connection
+
+
+
+- **moe_top_k**: int
+
+    Default = 1
+
+    Activate top K experts in MoE
+
+
+
+- **use_tutel**: bool
+
+    Default = False
+
+    Use Tutel optimizations in MoE
+
+
+
+- **num_experts**: int
+
+    Default = 1
+
+    Number of MoE experts
+
+
+
+- **moe_loss_coeff**: float
+
+    Default = 0.1
+
+    Coefficient for MoE loss
+
+
+
+- **moe_train_capacity_factor**: float
+
+    Default = 1.0
+
+    The capacity of the expert at train time
+
+
+
+- **moe_eval_capacity_factor**: float
+
+    Default = 1.0
+
+    The capacity of the expert at eval time
+
+
+
+- **moe_min_capacity**: int
+
+    Default = 4
+
+    The minimum capacity per expert regardless of the capacity_factor
+
+
+
+- **moe_token_dropping**: bool
+
+    Default = True
+
+    Whether to drop tokens when exceeding capacity
+
+
+
+- **create_moe_param_group**: bool
+
+    Default = True
+
+    Whether to create a separate parameter group for MoE parameters
+
+
+
+- **moe_use_residual**: bool
+
+    Default = True
+
+    Whether to use residual in MoE
+
+
+
+- **moe_expert_parallel_size**: int
+
+    Default = 1
+
+    Number of parallel experts in MoE
 
 
 
@@ -1135,7 +1400,7 @@ Training Arguments
 
 - **weighted_sampler_alpha**: float
 
-    Default = 0.3
+    Default = 1.0
 
     Alpha value for `weight_by_num_documents`. Only has an effect if `weight_by_num_documents` = True.
 
@@ -1145,11 +1410,11 @@ Training Arguments
 
 
 
-- **data_impl**: str
+- **data_impl**: typing.Literal['infer', 'mmap', 'cached']
 
     Default = infer
 
-    Implementation of indexed datasets.
+    Implementation of indexed datasets, can be one of "infer", "cached", or "mmap"
 
 
 
@@ -1166,6 +1431,22 @@ Training Arguments
     Default = None
 
     Output directory to save checkpoints to.
+
+
+
+- **s3_path**: str
+
+    Default = None
+
+    Path to s3 bucket for saving checkpoints.
+
+
+
+- **s3_chunk_size**: int
+
+    Default = 104857600
+
+    The number of bytes in each file chunk when uploading to s3. Defaults to 100MiB.
 
 
 
@@ -1349,7 +1630,7 @@ Training Arguments
 
 - **attention_dropout**: float
 
-    Default = 0.1
+    Default = 0.0
 
     Post attention dropout probability.
 
@@ -1357,7 +1638,7 @@ Training Arguments
 
 - **hidden_dropout**: float
 
-    Default = 0.1
+    Default = 0.0
 
     Dropout probability for hidden state transformer.
 
@@ -1365,7 +1646,7 @@ Training Arguments
 
 - **weight_decay**: float
 
-    Default = 0.01
+    Default = 0.1
 
     Weight decay coefficient for L2 regularization.
 
@@ -1436,17 +1717,9 @@ Training Arguments
 
 
 
-- **gas**: int
-
-    Default = None
-
-    gradient_accumulation_steps
-
-
-
 - **clip_grad**: float
 
-    Default = None
+    Default = 1.0
 
     Gradient clipping based on global L2 norm.
 
@@ -2019,5 +2292,13 @@ Args for deepspeed runner (deepspeed.launcher.runner).
 
     Default = None
 
-    Adds a `--comment` to the DeepSpeed launch command. In DeeperSpeed this is passed on to the SlurmLauncher as well. Sometime necessary for cluster rules, or so I've heard.
+    Adds a `--comment` to the DeepSpeed launch command. In DeeperSpeed this is passed on to the SlurmLauncher as well. Sometimes necessary for cluster rules, or so I've heard.
+
+
+
+- **account**: str
+
+    Default = None
+
+    Adds a `--account` to the DeepSpeed launch command. In DeeperSpeed this is passed on to the SlurmLauncher as well. Sometimes necessary for cluster rules, or so I've heard.
 

@@ -1,7 +1,7 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 # This file is based on code by the authors denoted below and has been modified from its original version.
 #
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -57,21 +57,12 @@ def _split(input_):
     if world_size == 1:
         return input_
 
-    # Bf16 convert
-    dt = input_.dtype
-    if dt == torch.bfloat16 and get_fp32_allreduce():
-        input_ = input_.float()
-
     # Split along last dimension.
     input_list = split_tensor_along_last_dim(input_, world_size)
 
     # Note: torch.split does not create contiguous tensors by default.
     rank = get_model_parallel_rank()
     output = input_list[rank].contiguous()
-
-    # Bf16 convert
-    if dt == torch.bfloat16 and get_fp32_allreduce():
-        output = output.bfloat16()
 
     return output
 

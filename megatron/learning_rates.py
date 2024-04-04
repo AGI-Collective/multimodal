@@ -1,7 +1,7 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 # This file is based on code by the authors denoted below and has been modified from its original version.
 #
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,17 +71,19 @@ class AnnealingLR(object):
 
         num_iters_ = num_iters_ - self.warmup_iter
         if self.decay_style == "linear":
-            lr = self.start_lr * (self.end_iter - num_iters_) / self.end_iter
+            end_iter_ = self.end_iter - self.warmup_iter
+            lr = self.start_lr * (end_iter_ - num_iters_) / end_iter_
         elif self.decay_style == "cosine":
             end_iter_ = self.end_iter - self.warmup_iter
             lr = self.min_lr + (
-                (self.start_lr-self.min_lr)
+                (self.start_lr - self.min_lr)
                 / 2.0
                 * (math.cos(math.pi * num_iters_ / end_iter_) + 1)
             )
         elif self.decay_style == "exponential":
             # exp(-0.693) = 1/2
-            lr = self.start_lr * math.exp(-0.693 * num_iters_ / self.end_iter)
+            end_iter = self.end_iter - self.warmup_iter
+            lr = self.start_lr * math.exp(-0.693 * num_iters_ / end_iter)
         else:
             lr = self.start_lr
         return max(lr, self.min_lr)

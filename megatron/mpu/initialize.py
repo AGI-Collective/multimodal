@@ -1,7 +1,7 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 # This file is based on code by the authors denoted below and has been modified from its original version.
 #
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -264,6 +264,38 @@ def get_pipe_parallel_rank():
 def get_pipe_parallel_world_size():
     """Return world size for the pipe parallel group."""
     return torch.distributed.get_world_size(group=get_pipe_parallel_group())
+
+
+def set_tensor_model_parallel_world_size(world_size):
+    """Set the tensor model parallel size"""
+    set_model_parallel_world_size(world_size)
+
+
+def get_tensor_model_parallel_group():
+    """Get the tensor model parallel group the caller rank belongs to."""
+    return get_model_parallel_group()
+
+
+def get_tensor_model_parallel_src_rank():
+    """Calculate the global rank corresponding to the first local rank
+    in the tensor model parallel group."""
+    return get_model_parallel_rank()
+
+
+# Needed for MOE. True tensor parallelism todo.
+def get_tensor_model_parallel_world_size():
+    """Return world size for the tensor model parallel group."""
+    return get_model_parallel_world_size()
+
+
+def set_tensor_model_parallel_rank(rank):
+    """Set tensor model parallel rank."""
+    set_model_parallel_rank(rank)
+
+
+def get_tensor_model_parallel_rank():
+    """Return my rank for the tensor model parallel group."""
+    return get_model_parallel_rank()
 
 
 def destroy_model_parallel():
