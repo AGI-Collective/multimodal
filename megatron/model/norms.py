@@ -1,4 +1,4 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 import torch
 from torch.nn import LayerNorm as LayerNorm
+from .fused_layer_norm import MixedFusedLayerNorm
 
 
 def get_norm(neox_args):
@@ -22,7 +23,7 @@ def get_norm(neox_args):
         eps = neox_args.rms_norm_epsilon
     elif neox_args.norm == "layernorm":
         eps = neox_args.layernorm_epsilon
-        norm = LayerNorm
+        norm = MixedFusedLayerNorm if neox_args.layernorm_fusion else LayerNorm
     elif neox_args.norm == "scalenorm":
         eps = neox_args.scalenorm_epsilon
         norm = ScaleNorm
@@ -56,6 +57,7 @@ class RMSNorm(torch.nn.Module):
             self.register_parameter("offset", self.offset)
 
     def forward(self, x):
+        dtype = x.dtype
         if self.p < 0.0 or self.p > 1.0:
             norm_x = x.norm(2, dim=-1, keepdim=True)
             d_x = self.d
@@ -72,7 +74,7 @@ class RMSNorm(torch.nn.Module):
         if self.bias:
             return self.scale * x_normed + self.offset
 
-        return self.scale * x_normed
+        return (self.scale * x_normed).to(dtype)
 
 
 class ScaleNorm(torch.nn.Module):

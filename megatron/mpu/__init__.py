@@ -1,4 +1,4 @@
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,9 @@ from .initialize import get_topology
 from .initialize import get_pipe_parallel_group
 from .initialize import get_pipe_parallel_rank
 from .initialize import get_pipe_parallel_world_size
+from .initialize import get_tensor_model_parallel_group
+from .initialize import get_tensor_model_parallel_rank
+from .initialize import get_tensor_model_parallel_world_size
 from .initialize import get_io_parallel_group
 from .initialize import initialize_model_parallel
 from .initialize import model_parallel_is_initialized

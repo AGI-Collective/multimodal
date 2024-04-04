@@ -1,4 +1,4 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,13 @@ import pytest
 
 import torch
 import os
-from ..common import distributed_test, model_setup, clear_test_dirs, parametrize, binary
+from tests.common import (
+    DistributedTest,
+    model_setup,
+    clear_test_dirs,
+    parametrize,
+    binary,
+)
 
 PARAMS_TO_TEST = {
     "pipe_parallel_size,model_parallel_size,world_size": [
@@ -69,13 +75,13 @@ parameters, names = parametrize(
 )
 
 
+@pytest.mark.xfail(
+    reason="Either fused kernels are not installed, or Cannot re-initialize CUDA in forked subprocess'"
+)
 @pytest.mark.parametrize("param_dict", parameters, ids=names)
 def test_instantiate(param_dict):
-    @distributed_test(world_size=param_dict.pop("world_size", 2))
-    def wrapper():
-        run_test_model_instantiation(param_dict=param_dict)
-
-    wrapper()
+    t1 = test_instantiate_optimizers_class()
+    t1.run_test_model_instantiation(param_dict)
 
 
 OPTIMIZER_PARAMS = {
@@ -85,6 +91,7 @@ OPTIMIZER_PARAMS = {
         {"type": "cpu_adam", "params": {"lr": 0.0006}},
         {"type": "cpu_torch_adam", "params": {"lr": 0.0006}},
         {"type": "sm3", "params": {"lr": 0.0006}},
+        {"type": "lion", "params": {"lr": 0.0006}},
         {"type": "madgrad_wd", "params": {"lr": 0.0006}},
     ]
 }
@@ -93,26 +100,29 @@ opt_params, opt_name = parametrize(
 )
 
 
-@pytest.mark.parametrize("param_dict", parameters, ids=names)
+@pytest.mark.xfail(
+    reason="Either fused kernels are not installed, or 'Cannot re-initialize CUDA in forked subprocess'"
+)
+@pytest.mark.parametrize("param_dict", opt_params, ids=opt_name)
 def test_instantiate_optimizers(param_dict):
-    @distributed_test(world_size=2)
-    def wrapper():
-        run_test_model_instantiation(param_dict=param_dict)
-
-    wrapper()
+    t1 = test_instantiate_optimizers_class()
+    t1.run_test_model_instantiation(param_dict)
 
 
-def run_test_model_instantiation(yaml_list=None, param_dict=None):
-    from deepspeed.runtime.pipe.engine import PipelineEngine, DeepSpeedEngine
+class test_instantiate_optimizers_class(DistributedTest):
+    world_size = 2
 
-    model, optimizer, lr_scheduler, args_loaded = model_setup(yaml_list, param_dict)
-    if args_loaded.pipe_parallel_size < 2:
-        assert isinstance(model, DeepSpeedEngine), "test model instantiation " + str(
-            yaml_list
-        )
-    else:
-        assert isinstance(model, PipelineEngine), "test model instantiation " + str(
-            yaml_list
-        )
-    if torch.distributed.get_world_size() == 1 or torch.distributed.get_rank() == 0:
-        clear_test_dirs()
+    def run_test_model_instantiation(yaml_list=None, param_dict=None):
+        from deepspeed.runtime.pipe.engine import PipelineEngine, DeepSpeedEngine
+
+        model, optimizer, lr_scheduler, args_loaded = model_setup(yaml_list, param_dict)
+        if args_loaded.pipe_parallel_size < 2:
+            assert isinstance(
+                model, DeepSpeedEngine
+            ), "test model instantiation " + str(yaml_list)
+        else:
+            assert isinstance(model, PipelineEngine), "test model instantiation " + str(
+                yaml_list
+            )
+        if torch.distributed.get_world_size() == 1 or torch.distributed.get_rank() == 0:
+            clear_test_dirs()

@@ -1,7 +1,7 @@
-# Copyright (c) 2021 EleutherAI
+# Copyright (c) 2024 EleutherAI
 # This file is based on code by the authors denoted below and has been modified from its original version.
 #
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ from megatron.model.transformer import (
     ParallelLinear,
 )
 from megatron.model.gmlp import GMLPBlock
+from megatron.model.mamba import ParallelMambaResidualLayerPipe
 from megatron.model.word_embeddings import EmbeddingPipe, SoftEmbedding
 
 # Pipeline parallelism
@@ -48,7 +49,9 @@ def gpt2_attention_mask_func(attention_scores, ltor_mask):
     mask_value = torch.finfo(attention_scores.dtype).min
     # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
     # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-    mask_value = torch.tensor(mask_value, dtype=attention_scores.dtype, device=attention_scores.device)
+    mask_value = torch.tensor(
+        mask_value, dtype=attention_scores.dtype, device=attention_scores.device
+    )
     attention_scores.masked_fill_(ltor_mask, mask_value)
     return attention_scores
 
@@ -132,7 +135,11 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
             if self.neox_args.checkpoint_activations
             else 0,
             partition_method=neox_args.pipe_partition_method,
-            checkpointable_layers=["GMLPBlock", "ParallelTransformerLayerPipe"],
+            checkpointable_layers=[
+                "GMLPBlock",
+                "ParallelTransformerLayerPipe",
+                "ParallelMambaResidualLayerPipe",
+            ],
         )
 
     def insert_layers(
@@ -164,7 +171,11 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
             topology=self.__topology__,
             activation_checkpoint_interval=self.activation_checkpoint_interval,
             partition_method=self.neox_args.pipe_partition_method,
-            checkpointable_layers=["GMLPBlock", "ParallelTransformerLayerPipe"],
+            checkpointable_layers=[
+                "GMLPBlock",
+                "ParallelTransformerLayerPipe",
+                "ParallelMambaResidualLayerPipe",
+            ],
         )
 
     def init_specs(self):
@@ -238,6 +249,16 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
                         output_layer_init_method=self.output_layer_init_method,
                         neox_args=self.neox_args,
                         mask_fn=gpt2_attention_mask_func,
+                    )
+                )
+            elif layer_type in ["mamba"]:
+                self.specs.append(
+                    LayerSpec(
+                        ParallelMambaResidualLayerPipe,
+                        neox_args=self.neox_args,
+                        init_method=self.init_method,
+                        output_layer_init_method=self.output_layer_init_method,
+                        layer_number=i,
                     )
                 )
             else:

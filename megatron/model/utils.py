@@ -1,7 +1,7 @@
-# Copyright (c) 2021 EleutherAI
+# Copyright (c) 2024 EleutherAI
 # This file is based on code by the authors denoted below and has been modified from its original version.
 #
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,8 +28,12 @@ def get_params_for_weight_decay_optimization(module, neox_args):
     """Divide params into with-weight-decay and without-weight-decay groups.
     Layernorms and biases will have no weight decay but the rest will.
     """
-    weight_decay_params = {"params": []}
-    no_weight_decay_params = {"params": [], "weight_decay": 0.0}
+    weight_decay_params = {"params": [], "name": "weight_decay_params"}
+    no_weight_decay_params = {
+        "params": [],
+        "weight_decay": 0.0,
+        "name": "no_weight_decay_params",
+    }
     for module_ in module.modules():
         if any(
             [
@@ -48,14 +52,17 @@ def get_params_for_weight_decay_optimization(module, neox_args):
                 [
                     p
                     for n, p in list(module_._parameters.items())
-                    if p is not None and n != "bias"
+                    if p is not None
+                    and n != "bias"
+                    and not getattr(p, "_no_weight_decay", False)
                 ]
             )
             no_weight_decay_params["params"].extend(
                 [
                     p
                     for n, p in list(module_._parameters.items())
-                    if p is not None and n == "bias"
+                    if p is not None
+                    and (n == "bias" or getattr(p, "_no_weight_decay", False))
                 ]
             )
     if neox_args.weight_decay == 0.0:
@@ -97,6 +104,7 @@ class SequentialWrapper(torch.nn.Module):
         self.activation_checkpoint_interval = activation_checkpoint_interval
         self.parent_class_name = parent_class_name
         self.activation_checkpoint_func = activation_checkpoint_func
+        self.batch_fn = None
 
     def _is_checkpointable(self, funcs):
         if self.parent_class_name == "GPT2ModelPipe":
@@ -105,6 +113,14 @@ class SequentialWrapper(torch.nn.Module):
             )
         params = [f.parameters() for f in funcs if isinstance(f, torch.nn.Module)]
         return any(len(list(p)) > 0 for p in params)
+
+    def set_batch_fn(self, fn):
+        """Execute a post-processing function on input data.
+
+        Args:
+            fn (function): The function to run.
+        """
+        self.batch_fn = fn
 
     def inference_mode(self, use_cache=True):
         """
@@ -126,6 +142,9 @@ class SequentialWrapper(torch.nn.Module):
     def forward(
         self, forward_input, curriculum_seqlen=None, labels=None, neox_args=None
     ):
+
+        if self.batch_fn:
+            forward_input = self.batch_fn(forward_input)
 
         if (
             curriculum_seqlen is not None
@@ -150,6 +169,8 @@ class SequentialWrapper(torch.nn.Module):
                 ].contiguous()
             forward_input = (tokens, input_ids, attention_mask)
 
+        moe_losses = []
+
         def exec_range_func(start, end):
             """Helper function to be used with checkpoint()
             Adapted from torch.utils.checkpoint:checkpoint_sequential()
@@ -161,6 +182,8 @@ class SequentialWrapper(torch.nn.Module):
                     inputs = inputs[0]
                 for idx, layer in enumerate(self.sequential[start:end]):
                     inputs = layer(inputs)
+                    if hasattr(layer, "last_moe_loss"):
+                        moe_losses.append(layer.last_moe_loss)
                 return inputs
 
             return exec_func
@@ -188,7 +211,13 @@ class SequentialWrapper(torch.nn.Module):
                     )
                 else:
                     x = exec_range_func(start_idx, end_idx)(*x)
-        return x
+        return x, moe_losses
+
+    def clear_cache(self):
+        """
+        Recursively clears the kv cache on all layers
+        """
+        recursive_setattr(self.sequential, "layer_past", None)
 
 
 def recursive_setattr(m, attr, value, assert_type=None, type_filter=None):

@@ -1,4 +1,4 @@
-# Copyright (c) 2021, EleutherAI
+# Copyright (c) 2024, EleutherAI
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import logging
 import copy
 import torch
 import argparse
+from pkg_resources import packaging
+from importlib.metadata import version
 
 from dataclasses import dataclass
 from typing import List, Dict
@@ -237,7 +239,7 @@ class NeoXArgs(*BASE_CLASSES):
     # start of command line args interface
 
     @classmethod
-    def consume_deepy_args(cls):
+    def consume_deepy_args(cls, input_args=None):
         """
         entry point for deepy.py configuring and consuming command line arguments.
 
@@ -293,13 +295,13 @@ class NeoXArgs(*BASE_CLASSES):
             type=str,
             nargs="+",
             default=None,
-            help="Optionally overwrite eval tasks to run for evaluate.py",
+            help="Optionally overwrite eval tasks to run for eval.py",
         )
         group.add_argument(
             "--iteration",
             type=int,
             default=None,
-            help="Iteration to load checkpoint from in evaluate.py / generate.py. If None is provided, uses the latest iteration.",
+            help="Iteration to load checkpoint from in the eval.py and generate.py scripts. If None is provided, uses the latest iteration.",
         )
         group.add_argument(
             "--eval_results_prefix",
@@ -339,8 +341,7 @@ class NeoXArgs(*BASE_CLASSES):
             choices=("tune", "run"),
             help="Use DeepSpeed's autotuning feature to optimize certain hyperparameters. For more details refer to documentation here: https://www.deepspeed.ai/tutorials/autotuning/",
         )
-
-        args_parsed = parser.parse_args()
+        args_parsed = parser.parse_args(input_args)
 
         # Validate user_script exists
         assert os.path.exists(
@@ -394,7 +395,7 @@ class NeoXArgs(*BASE_CLASSES):
         return neox_args
 
     @classmethod
-    def consume_neox_args(cls, overwrite_values=None):
+    def consume_neox_args(cls, overwrite_values=None, input_args=None):
         """
         Deepspeed launcher needs to pass the arguments for `pretrain_gpt2.py` across to all machines.
 
@@ -419,7 +420,7 @@ class NeoXArgs(*BASE_CLASSES):
             default=None,
             help="Only need this (at this stage) for autotuning",
         )
-        args_parsed, _ = parser.parse_known_args()
+        args_parsed, _ = parser.parse_known_args(input_args)
         megatron_config = json.loads(
             base64.urlsafe_b64decode(args_parsed.megatron_config).decode("utf-8")
         )
@@ -506,6 +507,12 @@ class NeoXArgs(*BASE_CLASSES):
                 args_list.extend(
                     self.convert_key_value_to_command_line_arg("comment", comment)
                 )
+            account = getattr(self, "account")
+            if account:
+                args_list.extend(
+                    self.convert_key_value_to_command_line_arg("account", account)
+                )
+
             # master_address = os.environ['SLURM_JOB_NODELIST'].split('\n')[0]
             # args_list.extend(
             #    self.convert_key_value_to_command_line_arg('master_addr', master_address)
@@ -732,7 +739,14 @@ class NeoXArgs(*BASE_CLASSES):
         if self.deepspeed_slurm:
             os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
             os.environ["RANK"] = os.environ["SLURM_PROCID"]
-            os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+            os.environ["WORLD_SIZE"] = (
+                os.environ["SLURM_NTASKS"]
+                if os.environ.get("SLURM_NTASKS") is not None
+                else str(
+                    int(os.environ["SLURM_NNODES"])
+                    * int(os.environ["SLURM_NTASKS_PER_NODE"])
+                )
+            )
 
         self.update_value("local_rank", int(os.getenv("LOCAL_RANK", "0")))
         self.update_value("rank", int(os.getenv("RANK", "0")))
@@ -884,7 +898,6 @@ class NeoXArgs(*BASE_CLASSES):
                 "gradient_accumulation_steps": gradient_accumulation_steps,
                 "batch_size": train_micro_batch_size_per_gpu,
                 # duplicate items
-                "gas": self.gradient_accumulation_steps,
                 "clip_grad": self.gradient_clipping,
             }
         )
@@ -930,12 +943,25 @@ class NeoXArgs(*BASE_CLASSES):
             self.update_value("fp16", fp16_args)
         elif self.precision == "bfloat16":
             bf_config = {"bf16": {"enabled": True}}
+            # dt_config = {"grad_accum_dtype": "fp32"}
             if self.deepspeed_extra_args is None:
                 self.update_value("deepspeed_extra_args", bf_config)
             else:
                 extra_args = copy.deepcopy(self.deepspeed_extra_args)
                 extra_args.update(bf_config)
                 self.update_value("deepspeed_extra_args", extra_args)
+
+            zero_stage = self.zero_optimization["stage"]
+            if self.data_types is None:
+                fp32_grad_accum = False
+            else:
+                fp32_grad_accum = self.data_types.get("grad_accum_dtype") == "fp32"
+            if (zero_stage > 0) and (pp_size > 0) and not fp32_grad_accum:
+                # Remove this code when this issue is resolved
+                # https://github.com/microsoft/DeepSpeed/issues/1835
+                logging.warn(
+                    "Outstanding DeepSpeed issue means that pp>0, zero1, and bf16 will break without fp32 grads"
+                )
         else:
             self.update_value("precision", "fp32")
 
@@ -1007,7 +1033,14 @@ class NeoXArgs(*BASE_CLASSES):
         # Update 'is pipe parallel' flag
         # if we set pipe_parallel_size to 0 or 1, GPT2ModelPipe.to_sequential() is called, and we run training with
         # the sequential model without the PipelineModule wrapper to avoid the overhead it incurs
-        self.update_value("is_pipe_parallel", self.pipe_parallel_size >= 1)
+        self.update_value(
+            "is_pipe_parallel", self.pipe_parallel_size > 1 and self.num_experts == 1
+        )
+        if self.num_experts > 1:
+            assert not (
+                self.is_pipe_parallel or self.pipe_parallel_size > 1
+            ), "MoE not supported with pipeline parallelism"
+            assert self.zero_optimization["stage"] != 3, "MoE not compatible with zero3"
 
         # Attention config
         if self.attention_config is None:
@@ -1027,11 +1060,49 @@ class NeoXArgs(*BASE_CLASSES):
             assert (
                 not self.partition_activations
             ), "GMLP Blocks are not compatible with partition activations"
+        if "mamba" in self.attention_config:
+            if isinstance(self.zero_stage, int):
+                assert self.zero_stage <= 2, "Zero stage 3 not compatible with Mamba"
+            assert (
+                self.hidden_dropout == 0.0,
+            ), "Mamba does not yet have dropout implemented"
 
         # Sparsity config
         if self.sparsity_config is None:
             # Can't have a default value as an empty dict so need to set it here
             self.update_value("sparsity_config", {})
+
+        # Multi-query or grouped-query attention settings
+        if self.num_kv_heads is not None:
+            # need KV heads <= query heads, and KV heads dividing query heads evenly
+            assert (
+                self.num_attention_heads % self.num_kv_heads == 0
+            ), "num_kv_heads must evenly divide num_attention_heads and be no greater than it"
+
+            if self.num_kv_heads < self.num_attention_heads:
+                # GQA / MQA not compatible with sparse attention configurations
+                assert (
+                    not self.sparsity_config
+                ), "Sparse attention not compatible with GQA or MQA"
+                assert all(
+                    (attn_type == "flash") or (attn_type == "global")
+                    for attn_type in self.attention_config
+                ), "GQA / MQA currently only compatible with Flash or standard global/sliding window Attention"
+                assert (
+                    self.num_kv_heads % self.model_parallel_size == 0
+                ), "Number of KV heads must be at least model_parallel_size for now!"
+        # Flash attention version >=2.3.0 required to combine Flash + Sliding Window Attention
+        if "flash" in self.attention_config:
+            _flash_version = packaging.version.Version(version("flash-attn"))
+            if self.sliding_window_width is not None:
+                assert _flash_version >= packaging.version.Version(
+                    "2.3.0"
+                ), f"Flash-Attention version ({str(_flash_version)}) must be >= 2.3.0 to support sliding window attention."
+            if self.pos_emb == "alibi":
+                if not _flash_version >= packaging.version.Version("2.4.0.post1"):
+                    print(
+                        f"Warning: Flash-Attention version ({str(_flash_version)}) must be >= 2.4.0.post1 to support AliBi. Falling back to flash-attn triton backend, but version 2.4.0.post1 or later will be required in future."
+                    )
 
         # Adding equal dataset weights if none are provided
         if self.train_data_paths and (self.train_data_weights is None):
@@ -1040,6 +1111,12 @@ class NeoXArgs(*BASE_CLASSES):
             self.valid_data_weights = [1.0] * len(self.valid_data_paths)
         if self.test_data_paths and (self.test_data_weights is None):
             self.test_data_weights = [1.0] * len(self.test_data_paths)
+
+        if self.label_data_paths:
+            err_str = (
+                "Must use `label_data_paths` with `train_data_paths`, not `data_path`"
+            )
+            assert self.train_data_paths and not self.data_path, err_str
 
         # if a sample input file is provided, default text_gen_type type to input-file
         if self.text_gen_type is None:
