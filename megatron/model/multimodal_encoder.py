@@ -12,6 +12,7 @@ ENCODER_OUT_DIMS = {
     "dinov2_large": 1024, 
     "dinov2_small": 384,
     "openclip": 768, 
+    "evaclip": 1024, 
 }
 
 ENCODER_SEQ_LENS = {
@@ -19,6 +20,7 @@ ENCODER_SEQ_LENS = {
     "dinov2_large": 257, 
     "dinov2_small": 257,
     "openclip": 49,
+    "evaclip": 257, 
 }
 
 # MultModal Encoder for Vision and Audio 

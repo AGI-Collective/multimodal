@@ -35,7 +35,7 @@ from streaming.base.format.mds.encodings import Encoding, _encodings
 
 from megatron.tokenizer.tokenizer import build_tokenizer
 
-IMAGE_SIZE = 336
+IMAGE_SIZE = 224
 
 IMAGE_UNDERSTANDING_TEXT_VARIANTS = [
     ("Describe this image", " "),
@@ -1248,7 +1248,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--workers", type=int, default=22)  # 44       # 80
     parser.add_argument("--num_writers", type=int, default=26)  # 2
     parser.add_argument("--start_ind", type=int, default=0)
-    parser.add_argument("--end_ind", type=int, default=62)  # 150
+    parser.add_argument("--end_ind", type=int, default=5000)  # 150
     parser.add_argument("--tokenizer_type", type=str, required=False, default=None)
     parser.add_argument("--vocab_file", type=str, required=False, default=None)
     parser.add_argument("--merge_file", type=str, required=False, default=None)
@@ -1288,10 +1288,10 @@ number of groups 100
 python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/hummingbird/SlimPajama-627B/train/chunk2 --dataset_type text --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/text_val_chunk2
 
 5e8, 22, 26
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode understanding --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_val_understanding
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode understanding --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_understanding_new
 
 5e8, 22, 26
-python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode generation --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_val_generation
+python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/datacomp/datacomp_1B/flat --dataset_type datacomp --datacomp_mode generation --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/datacomp_train_generation_new
 
 5e8, 30, 18
 python megatron/data/streaming_dataset/interleaved_text_image/create_unified_interleaved_dataset.py --path /p/fastdata/mmlaion/OBELICS_parquet --dataset_type obelics --compression zstd --concat_tokens 2048 --tokenizer_type HFTokenizer --vocab_file /p/project/ccstdl/gupta6/multimodal/20B_tokenizer.json --out_root /p/fastdata/mmlaion/hummingbird/hummingbird_dataset_final/obelics_val
