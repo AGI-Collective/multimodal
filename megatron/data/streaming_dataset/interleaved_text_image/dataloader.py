@@ -26,7 +26,7 @@ from einops import rearrange
 
 # from megatron.data.streaming_dataset.interleaved_text_image.create_interleaved_dataset import simple_encoding, ListPIL, PickleEncoding
 
-from megatron.data.streaming_dataset.interleaved_text_image.create_unified_interleaved_dataset import ListPIL
+from megatron.data.streaming_dataset.interleaved_text_image.create_unified_interleaved_dataset import ListPIL, IMAGE_SIZE
 # _encodings['pickleencoding'] = PickleEncoding
 _encodings['listpil'] = ListPIL
 # _encodings['simple_encoding'] = simple_encoding
@@ -191,10 +191,10 @@ class StreamingInterleavedDataset(StreamingDataset):
             images = np.stack(images)
         else:
             images = np.array([])
-        vision_input = images.reshape(-1, 224, 224, 3)    
+        vision_input = images.reshape(-1, IMAGE_SIZE, IMAGE_SIZE, 3)    
         is_vision_empty = vision_input.shape[0] == 0
         if is_vision_empty:
-            vision_input = np.zeros((1, 224, 224, 3), dtype=np.uint8)
+            vision_input = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
         
         vision_input = torch.from_numpy(vision_input).to(torch.int64)
         vision_input = vision_input.unsqueeze(1) # TODO: Fix for num_frames > 1
