@@ -688,11 +688,6 @@ class NeoXArgsOther(NeoXArgsTemplate):
     Include sequence id as attention bias.
     """
 
-    concat_data: bool = True
-    """
-    Concatenate sequences for training.
-    """
-
 
 @dataclass
 class NeoXArgsTokenizer(NeoXArgsTemplate):

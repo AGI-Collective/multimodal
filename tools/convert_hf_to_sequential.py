@@ -35,11 +35,11 @@ Note that this script requires access to corresponding config files for equivale
 Example usage: (Converts the 70M Pythia model to NeoX format)
 ================================================================
 OMPI_COMM_WORLD_RANK=0 CUDA_VISIBLE_DEVICES=0 python tools/convert_hf_to_sequential.py \
-    --hf-model-name pythia-1b \
+    --hf-model-name pythia-1.4b \
     --revision 143000 \
-    --output-dir /p/fastdata/mmlaion/hummingbird/checkpoints/1_neox \
-    --cache-dir /p/fastdata/mmlaion/hummingbird/checkpoints/pythia1B \
-    --config configs/1B.yml configs/hummingbird_streaming.yml \
+    --output-dir /p/fastdata/mmlaion/hummingbird/checkpoints/1_4_final \
+    --cache-dir /p/fastdata/mmlaion/hummingbird/checkpoints/pythia_final \
+    --config configs/pythia/1-4B.yml configs/hummingbird_streaming.yml \
     --test
 
 
@@ -47,16 +47,16 @@ For multi-gpu support we must initialize deepspeed:
 NOTE: This requires manually changing the arguments below.
 ================================================================
 CUDA_VISIBLE_DEVICES=0,1,2,3 python ./deepy.py tools/convert_hf_to_sequential.py \
-    -d configs 1B.yml hummingbird_streaming.yml
+    -d configs pythia/1-4B.yml hummingbird_streaming.yml
 """
 
 MULTI_GPU_ARGS = " ".join(
     [
-        "--hf-model-name pythia-1b",
+        "--hf-model-name pythia-1.4b",
         "--revision 143000",
-        "--output-dir /p/fastdata/mmlaion/hummingbird/checkpoints/1_neox",
-        "--cache-dir /p/fastdata/mmlaion/hummingbird/checkpoints/pythia1B",
-        "--config configs/1B.yml configs/hummingbird_streaming.yml",
+        "--output-dir /p/fastdata/mmlaion/hummingbird/checkpoints/1_4_final",
+        "--cache-dir /p/fastdata/mmlaion/hummingbird/checkpoints/pythia_final",
+        "--config configs/pythia/1-4B.yml configs/hummingbird_streaming.yml",
         "--test",
     ]
 )
