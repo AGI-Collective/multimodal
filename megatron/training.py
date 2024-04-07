@@ -308,23 +308,6 @@ def pretrain(neox_args):
             chart_name="test",
         )
 
-def get_vision_tokens(images):
-    tokenizer_cfg_path = 'configs/tokenizer/seed_llama_tokenizer_hf.yaml'
-    transform_cfg_path = 'configs/transform/clip_transform.yaml'
-    device = images.device
-
-    tokenizer_cfg = OmegaConf.load(tokenizer_cfg_path)
-    tokenizer = hydra.utils.instantiate(tokenizer_cfg, device=device, load_diffusion=True)
-
-    transform_cfg = OmegaConf.load(transform_cfg_path)
-    transform = hydra.utils.instantiate(transform_cfg)
-
-    image = Image.open(image_path).convert('RGB')
-
-    image_tensor = transform(image).to(device)
-    image_ids = tokenizer.encode_image(image_torch=image_tensor)
-    return image_ids
-
 def _get_batch(neox_args, tokenizer, keys, data, datatype):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
